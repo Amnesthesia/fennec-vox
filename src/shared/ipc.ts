@@ -19,7 +19,7 @@ export const IPC = {
 } as const;
 
 export type TtsVoice  = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'fable' | 'nova' | 'onyx' | 'sage' | 'shimmer' | 'verse';
-export type TtsFormat = 'mp3' | 'opus' | 'aac' | 'flac';
+export type TtsFormat = 'mp3' | 'opus' | 'aac' | 'flac' | 'm4b' | 'm4a';
 export type TtsModel  = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
 export interface ConversionOptions {

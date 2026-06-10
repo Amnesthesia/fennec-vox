@@ -17,10 +17,10 @@
   --aurora-end:      #3b82c4;
   --text:            #1a1a1a;
   --text-secondary:  #6b7280;
-  --border:          rgba(0, 0, 0, 0.08);
-  --border-focus:    rgba(59, 130, 196, 0.5);
-  --shadow:          0 1px 3px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-lg:       0 6px 24px rgba(0, 0, 0, 0.10);
+  --border:          #dde1e7;
+  --border-focus:    #3b82c4;
+  --shadow:          none;
+  --shadow-lg:       none;
   --radius:          8px;
   --radius-lg:       12px;
   --font:            'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
@@ -150,7 +150,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-bottom: 8px;
+  margin-bottom: 16px;
 }
 
 .field:last-child { margin-bottom: 0; }
@@ -161,7 +161,15 @@ html, body, #root {
   font-weight: 500;
 }
 
+.field-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 4px;
+  margin-bottom: 10px;
+}
+
 .field input,
+.field textarea,
 .field select {
   width: 100%;
   padding: 5px 8px;
@@ -172,14 +180,13 @@ html, body, #root {
   font-family: var(--font);
   font-size: 12px;
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s;
   -webkit-app-region: no-drag;
 }
 
 .field input:focus,
 .field select:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(59, 130, 196, 0.14);
 }
 
 .field input[type="number"] { font-variant-numeric: tabular-nums; }
@@ -197,7 +204,7 @@ html, body, #root {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.12s, opacity 0.12s, box-shadow 0.12s;
+  transition: background 0.12s, opacity 0.12s;
   -webkit-app-region: no-drag;
 }
 
@@ -206,11 +213,10 @@ html, body, #root {
 .btn-primary {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 4px rgba(59, 130, 196, 0.3);
+  border: 1px solid var(--accent-hover);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(59, 130, 196, 0.4);
 }
 
 .btn-danger    { background: var(--danger);  color: #fff; }
@@ -275,11 +281,10 @@ html, body, #root {
 /* ── Progress panel ─────────────────────────────────────────────────────────── */
 .progress-panel {
   padding: 20px 20px 16px;
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
   background: var(--card-bg);
   margin: 12px;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
 }
 
 .progress-header {
@@ -397,7 +402,7 @@ html, body, #root {
   margin: 0 12px 12px;
   background: var(--card-bg);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
   color: var(--text-secondary);
 }
 .log-viewer::before {
@@ -431,7 +436,7 @@ html, body, #root {
 .modal {
   background: var(--card-bg);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
   padding: 0;
   width: 460px;
   max-width: 90vw;
@@ -555,7 +560,6 @@ html, body, #root {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
   padding: 40px 44px;
   display: flex;
   flex-direction: column;
@@ -573,6 +577,18 @@ html, body, #root {
   background-size: contain;
   background-repeat: no-repeat;
   margin-bottom: 16px;
+}
+
+.logo {
+  height: 128px;
+  width: 128px;
+  margin: auto auto;
+  /* rotate the background image: */
+  background-image: url('./assets/fennec-vox.png');
+  background-size: cover;
+  transform: rotate(-12deg);
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .sidebar-logo {
@@ -632,12 +648,11 @@ html, body, #root {
   background: var(--bg);
   color: var(--text);
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s;
   -webkit-app-region: no-drag;
 }
 .setup-key-input:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(59, 130, 196, 0.12);
 }
 
 .setup-key-error {
@@ -704,3 +719,38 @@ html, body, #root {
   color: var(--accent);
   opacity: 0.8;
 }
+
+/* ── Poem popover ───────────────────────────────────────────────────────────── */
+.poem-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  -webkit-app-region: no-drag;
+}
+
+.poem-popover-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.poem-popover-item:last-child { border-bottom: none; }
+.poem-popover-item:hover { background: var(--accent-subtle); color: var(--accent); }

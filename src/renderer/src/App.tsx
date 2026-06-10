@@ -32,12 +32,12 @@ const INITIAL_STATE: AppConversionState = {
 export default function App() {
   const [epubPath,    setEpubPath]    = useState('');
   const [outputDir,   setOutputDir]   = useState('');
-  const [voice,       setVoice]       = useState<TtsVoice>('alloy');
-  const [format,      setFormat]      = useState<TtsFormat>('mp3');
+  const [voice,       setVoice]       = useState<TtsVoice>('echo');
+  const [format,      setFormat]      = useState<TtsFormat>('m4b');
   const [ttsModel,    setTtsModel]    = useState<TtsModel>('gpt-4o-mini-tts');
-  const [chunkSize,        setChunkSize]        = useState(2000);
+  const [chunkSize,        setChunkSize]        = useState(3000);
   const [concurrency,      setConcurrency]      = useState(4);
-  const [ttsInstructions,  setTtsInstructions]  = useState('');
+  const [ttsInstructions,  setTtsInstructions]  = useState("You are a literary audiobook narrator. Speak with a mellow, warm baritone — measured and unhurried, never flat. Use subtle shifts in inflection and tempo to distinguish characters and carry emotional weight, not broad theatrical performance. For dialogue, let each voice emerge through slight tonal variation while keeping the overall register consistent. For reflective or philosophical passages, adopt a quieter, more pensive quality — slow down slightly and give the sentences space to breathe. Avoid dramatic pauses that feel staged. Treat punctuation honestly: commas are rests, paragraph breaks are longer ones. The listener should feel accompanied, not performed to.");
   const [showSettings, setShowSettings] = useState(false);
 
   const [hasOpenAiKey, setHasOpenAiKey] = useState<boolean | null>(null);

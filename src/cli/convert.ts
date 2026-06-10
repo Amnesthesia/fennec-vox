@@ -9,12 +9,16 @@ import fs from 'fs-extra';
 import path from 'path';
 import { load as cheerioLoad } from 'cheerio';
 import readline from 'readline';
+import { spawn, execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type MarkupProvider = 'claude-haiku' | 'gpt-4o-mini';
 export type TtsVoice  = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'fable' | 'nova' | 'onyx' | 'sage' | 'shimmer' | 'verse';
-export type TtsFormat = 'mp3'   | 'opus' | 'aac'   | 'flac';
+export type TtsFormat = 'mp3' | 'opus' | 'aac' | 'flac' | 'm4b' | 'm4a';
 export type TtsModel  = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
 export interface Chapter {
@@ -87,8 +91,8 @@ const argv = yargs(hideBin(process.argv))
   })
   .option('format', {
     alias: 'f', type: 'string' as const,
-    default: (process.env['TTS_FORMAT'] ?? 'mp3') as TtsFormat,
-    choices: ['mp3', 'opus', 'aac', 'flac'] as const,
+    default: (process.env['TTS_FORMAT'] ?? 'm4b') as TtsFormat,
+    choices: ['mp3', 'opus', 'aac', 'flac', 'm4b', 'm4a'] as const,
     description: 'Output audio format',
   })
   .option('tts-model', {
@@ -508,8 +512,8 @@ export async function synthesiseText(
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const params = { model: ttsModel, voice, input: chunk, response_format: format } as Parameters<typeof openai.audio.speech.create>[0];
-        if (instructions) (params as Record<string, unknown>)['instructions'] = instructions;
+        const params = { model: ttsModel, voice, input: chunk, response_format: format } as unknown as Parameters<typeof openai.audio.speech.create>[0];
+        if (instructions) (params as unknown as Record<string, unknown>)['instructions'] = instructions;
         const response = await openai.audio.speech.create(params);
         const buf = Buffer.from(await response.arrayBuffer());
         await fs.writeFile(file, buf);
@@ -657,6 +661,87 @@ function askConfirmation(question: string): Promise<string> {
   });
 }
 
+// ── ffmpeg helpers ────────────────────────────────────────────────────────────
+
+export function resolveFfmpegBin(): string {
+  // Packaged Electron: binary placed in resources dir
+  const rp = (process as typeof process & { resourcesPath?: string }).resourcesPath;
+  if (rp) {
+    const candidate = path.join(rp, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  // Dev/CLI: use ffmpeg-static if available
+  try {
+    // Use indirect require so esbuild doesn't inline the binary path at bundle time
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const p = (require as (id: string) => string | null)('ffmpeg-static');
+    if (p && fs.existsSync(p)) return p;
+  } catch { /* not installed */ }
+  return 'ffmpeg';
+}
+
+export function getAudioDurationMs(ffmpegBin: string, filePath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegBin, ['-i', filePath, '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    proc.on('close', () => {
+      const m = stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
+      if (!m) return reject(new Error(`Could not parse duration for ${filePath}`));
+      const ms = (parseInt(m[1]!) * 3600 + parseInt(m[2]!) * 60 + parseInt(m[3]!)) * 1000
+               + Math.round(parseInt(m[4]!) * (1000 / Math.pow(10, m[4]!.length)));
+      resolve(ms);
+    });
+  });
+}
+
+export async function buildM4b(
+  chapters: { file: string; title: string }[],
+  outputFile: string,
+  bookTitle: string,
+  bookAuthor: string,
+  ffmpegBin: string,
+): Promise<void> {
+  const tmpDir = path.dirname(outputFile);
+
+  // Probe durations sequentially (fast; only one ffmpeg process at a time)
+  const durations: number[] = [];
+  for (const ch of chapters) {
+    durations.push(await getAudioDurationMs(ffmpegBin, ch.file));
+  }
+
+  // Build ffmetadata
+  let meta = ';FFMETADATA1\n';
+  meta += `title=${bookTitle}\n`;
+  meta += `artist=${bookAuthor}\n\n`;
+  let cursor = 0;
+  for (let i = 0; i < chapters.length; i++) {
+    const start = cursor;
+    const end   = cursor + durations[i]!;
+    meta += `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${start}\nEND=${end}\ntitle=${chapters[i]!.title}\n\n`;
+    cursor = end;
+  }
+
+  const metaFile   = path.join(tmpDir, '_ffmeta.txt');
+  const concatFile = path.join(tmpDir, '_concat.txt');
+  await fs.writeFile(metaFile, meta, 'utf8');
+  await fs.writeFile(concatFile, chapters.map(ch => `file '${ch.file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
+
+  await execFileAsync(ffmpegBin, [
+    '-f', 'concat', '-safe', '0', '-i', concatFile,
+    '-i', metaFile,
+    '-map_metadata', '1',
+    '-map', '0:a',
+    '-c:a', 'copy',
+    '-movflags', '+faststart',
+    '-y',
+    outputFile,
+  ]);
+
+  await fs.remove(metaFile);
+  await fs.remove(concatFile);
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 export function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
@@ -666,6 +751,11 @@ export function safeFilename(str: string): string {
 export function padded(n: number): string { return String(n).padStart(4, '0'); }
 
 // ── Chapter processor ─────────────────────────────────────────────────────────
+
+// For m4b/m4a, individual TTS chunks are written as AAC; ffmpeg wraps them into M4B at the end.
+export function ttsFormat(format: TtsFormat): 'mp3' | 'opus' | 'aac' | 'flac' {
+  return (format === 'm4b' || format === 'm4a') ? 'aac' : format;
+}
 
 interface ProcessorOpts {
   provider:        MarkupProvider;
@@ -705,16 +795,17 @@ export async function processChapter(
     await fs.writeFile(narratorFile, ttsText, 'utf8');
   }
 
+  const innerFormat = ttsFormat(format);
   const ttsChunks = splitIntoChunks(ttsText, TTS_MAX_CHARS).length;
   emitProgress({ type: 'chapter_tts', index, chunks: ttsChunks });
   log(`  [${index}][2/2] Synthesising audio (${ttsChunks} TTS chunk(s))…`);
-  const audioBuffer = await synthesiseText(openai, ttsText, voice, format, ttsModel, concurrency,
-    (i) => path.join(chaptersDir, `chapter-${padded(index)}-chunk-${padded(i)}.${format}`),
+  const audioBuffer = await synthesiseText(openai, ttsText, voice, innerFormat, ttsModel, concurrency,
+    (i) => path.join(chaptersDir, `chapter-${padded(index)}-chunk-${padded(i)}.${innerFormat}`),
     (i, total, cached) => log(`  [${index}]       TTS chunk ${i + 1}/${total}${cached ? ' (cached)' : ''}…`),
     ttsInstructions,
   );
 
-  const chapterFile = path.join(chaptersDir, `chapter-${padded(index)}.${format}`);
+  const chapterFile = path.join(chaptersDir, `chapter-${padded(index)}.${innerFormat}`);
   await fs.writeFile(chapterFile, audioBuffer);
   const kb = (audioBuffer.length / 1024).toFixed(0);
   log(`  [${index}]       Saved: ${path.relative(process.cwd(), chapterFile)} (${kb} KB)`);
@@ -851,20 +942,33 @@ async function main(): Promise<void> {
 
   emitProgress({ type: 'assembly' });
   log('\nAssembling final audiobook…');
-  const parts   = await Promise.all(completedKeys.map(k => fs.readFile(progress.completedChapters[Number(k)]!.file)));
-  const combined = Buffer.concat(parts);
 
   const outputFile = path.join(outputDir, `${path.basename(inputPath, inputExt)}.${format}`);
-  await fs.writeFile(outputFile, combined);
 
-  const totalMB = combined.length / 1024 / 1024;
+  if (format === 'm4b' || format === 'm4a') {
+    const ffmpegBin = resolveFfmpegBin();
+    log(`Using ffmpeg: ${ffmpegBin}`);
+    const chapterEntries = completedKeys.map(k => ({
+      file:  progress.completedChapters[Number(k)]!.file,
+      title: progress.completedChapters[Number(k)]!.title,
+    }));
+    await buildM4b(
+      chapterEntries, outputFile,
+      progress.bookTitle ?? path.basename(inputPath, inputExt),
+      progress.bookAuthor ?? '',
+      ffmpegBin,
+    );
+  } else {
+    const parts   = await Promise.all(completedKeys.map(k => fs.readFile(progress.completedChapters[Number(k)]!.file)));
+    const combined = Buffer.concat(parts);
+    await fs.writeFile(outputFile, combined);
+  }
+
+  const stat = await fs.stat(outputFile);
+  const totalMB = stat.size / 1024 / 1024;
   log(`\nDone! Audiobook written to: ${outputFile}`);
   log(`Total size: ${totalMB.toFixed(2)} MB | Chapters: ${completedKeys.length}/${chapters.length}`);
   emitProgress({ type: 'complete', outputFile, totalMB, chapters: completedKeys.length, total: chapters.length });
-
-  if (format !== 'mp3') {
-    log(`Note: for ${format} format, binary concatenation is used.`);
-  }
 }
 
 if (require.main === module) {

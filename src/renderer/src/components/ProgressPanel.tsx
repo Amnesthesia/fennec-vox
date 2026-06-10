@@ -10,7 +10,7 @@ export default function ProgressPanel({ state }: Props) {
     return (
       <div className="progress-panel">
         <div className="idle-state">
-          <div className="idle-icon">🎙</div>
+          <div className="logo">&nbsp;</div>
           <p>Select an EPUB or PDF file and press <strong>Convert</strong> to begin</p>
         </div>
       </div>
