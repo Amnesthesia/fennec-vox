@@ -14,7 +14,8 @@
     "build:all": "pnpm run build && pnpm run build-cli",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.cli.json",
-    "package": "pnpm run build:all && electron-builder --mac",
+    "package:sign": "pnpm run build:all && electron-builder --mac",
+    "package": "pnpm run build:all && electron-builder --mac -c.mac.identity=null",
     "generate-previews": "tsx scripts/generate-voice-previews.ts"
   },
   "dependencies": {
