@@ -1,56 +1,61 @@
-declare module "epub" {
-	import { EventEmitter } from "node:events";
+// epub2 re-exports the epub module's default export
+declare module 'epub2' {
+  export { default } from 'epub';
+}
 
-	interface SpineItem {
-		id: string;
-		href: string;
-		title?: string;
-		mediaType?: string;
-		order?: number;
-	}
+declare module 'epub' {
+  import { EventEmitter } from 'node:events';
 
-	interface EpubMetadata {
-		title?: string;
-		creator?: string;
-		subject?: string;
-		description?: string;
-		publisher?: string;
-		contributor?: string;
-		date?: string;
-		type?: string;
-		format?: string;
-		source?: string;
-		language?: string;
-		relation?: string;
-		coverage?: string;
-		rights?: string;
-		ISBN?: string;
-		UUID?: string;
-	}
+  interface SpineItem {
+    id: string;
+    href: string;
+    title?: string;
+    mediaType?: string;
+    order?: number;
+  }
 
-	class EPub extends EventEmitter {
-		metadata: EpubMetadata;
-		flow: SpineItem[];
-		manifest: Record<string, SpineItem>;
+  interface EpubMetadata {
+    title?: string;
+    creator?: string;
+    subject?: string;
+    description?: string;
+    publisher?: string;
+    contributor?: string;
+    date?: string;
+    type?: string;
+    format?: string;
+    source?: string;
+    language?: string;
+    relation?: string;
+    coverage?: string;
+    rights?: string;
+    ISBN?: string;
+    UUID?: string;
+  }
 
-		constructor(
-			filename: string,
-			imagewebroot?: string,
-			chapterwebroot?: string,
-		);
+  class EPub extends EventEmitter {
+    metadata: EpubMetadata;
+    flow: SpineItem[];
+    manifest: Record<string, SpineItem>;
 
-		parse(): void;
+    constructor(
+      filename: string,
+      imagewebroot?: string,
+      chapterwebroot?: string,
+    );
 
-		getChapter(
-			id: string,
-			callback: (error: Error | null, text: string) => void,
-		): void;
+    parse(): void;
 
-		getImage(
-			id: string,
-			callback: (error: Error | null, data: Buffer, mimeType: string) => void,
-		): void;
-	}
+    getChapter(
+      id: string,
+      callback: (error: Error | null, text: string) => void,
+    ): void;
 
-	export = EPub;
+    getImage(
+      id: string,
+      callback: (error: Error | null, data: Buffer, mimeType: string) => void,
+    ): void;
+  }
+
+  export = EPub;
 }

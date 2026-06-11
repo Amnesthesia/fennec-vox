@@ -30,10 +30,16 @@ export default function FilePicker({
 		e.preventDefault();
 		setDragOver(false);
 		const file = e.dataTransfer.files[0];
-		if (file && (file.name.endsWith(".epub") || file.name.endsWith(".pdf"))) {
-			// Electron exposes a non-standard .path property on File objects
-			const filePath = (file as File & { path?: string }).path;
-			if (filePath) onChange(filePath);
+		if (!file || (!file.name.endsWith(".epub") && !file.name.endsWith(".pdf"))) return;
+		// Electron exposes a non-standard .path property on File objects
+		const filePath = (file as File & { path?: string }).path;
+		if (filePath) {
+			onChange(filePath);
+		} else {
+			// Browser: register the File object with the api layer, use the name as display value
+			const api = window.api as typeof window.api & { registerDroppedFile?: (f: File) => string };
+			const name = api.registerDroppedFile?.(file) ?? file.name;
+			onChange(name);
 		}
 	};
 
