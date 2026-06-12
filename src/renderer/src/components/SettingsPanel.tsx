@@ -50,9 +50,9 @@ export default function SettingsPanel({ onClose }: Props) {
 				<div className="modal-inner">
 					<h2>Settings</h2>
 					<p className="modal-sub">
-						API keys are stored locally on your device. Claude
-						Haiku is used for SSML markup when an Anthropic key is present;
-						otherwise GPT-4o mini is used.
+						API keys are stored locally on your device. Claude Haiku is used for
+						SSML markup when an Anthropic key is present; otherwise GPT-4o mini
+						is used.
 					</p>
 
 					{/* OpenAI */}

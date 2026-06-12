@@ -95,9 +95,9 @@ export default function ProgressPanel({ state }: Props) {
 			)}
 
 			{/* Per-chapter status list */}
-			{chapters.length > 0 && (
+			{chapters?.length > 0 && (
 				<div className="chapter-list">
-					{chapters.map((ch) => (
+					{chapters?.map((ch) => (
 						<div
 							key={ch.index}
 							className={`chapter-row ${ch.status === "done" ? "done" : ch.status === "ssml" || ch.status === "tts" ? "active" : ""}`}
