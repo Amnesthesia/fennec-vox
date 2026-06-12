@@ -1220,9 +1220,19 @@ async function main(): Promise<void> {
 		log("--yes flag set, proceeding automatically.");
 	}
 
-	const pending = chapters.filter(
-		(ch) => !progress.completedChapters[ch.index],
-	);
+	// Also re-process chapters cached from a previous run with a different audio format
+	// (e.g. old .mp3 files when current format is m4b/aac).
+	const expectedExt = `.${ttsFormat(format)}`;
+	const pending = chapters.filter((ch) => {
+		const rec = progress.completedChapters[ch.index];
+		if (!rec) return true;
+		if (!rec.file.endsWith(expectedExt)) {
+			log(`  Chapter ${ch.index}: cached file is wrong format (${path.extname(rec.file)} → ${expectedExt}), re-processing`);
+			delete progress.completedChapters[ch.index];
+			return true;
+		}
+		return false;
+	});
 	if (concurrency > 1)
 		log(
 			`\nProcessing ${pending.length} chapters with concurrency=${concurrency}…`,
