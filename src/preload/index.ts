@@ -1,5 +1,6 @@
 import type {
 	ConversionOptions,
+	Credentials,
 	ProgressEvent,
 	TtsModel,
 	TtsVoice,
@@ -14,12 +15,10 @@ const api = {
 		ipcRenderer.invoke(IPC.SELECT_OUTPUT_DIR),
 
 	// Credentials
-	getCredentials: (): Promise<{ anthropicKey: string; openaiKey: string }> =>
+	getCredentials: (): Promise<Credentials> =>
 		ipcRenderer.invoke(IPC.GET_CREDENTIALS),
-	saveCredentials: (c: {
-		anthropicKey: string;
-		openaiKey: string;
-	}): Promise<void> => ipcRenderer.invoke(IPC.SAVE_CREDENTIALS, c),
+	saveCredentials: (c: Credentials): Promise<void> =>
+		ipcRenderer.invoke(IPC.SAVE_CREDENTIALS, c),
 
 	// Open a URL in the system browser
 	openExternal: (url: string): Promise<void> =>

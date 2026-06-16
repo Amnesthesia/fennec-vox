@@ -6,11 +6,28 @@ import type {
 	Chapter,
 	ChapterRecord,
 	CostEstimate,
+	ElevenLabsModel,
 	MarkupProvider,
 	TtsModel,
+	TtsProvider,
 } from "./types";
 
-export const NARRATOR_SYSTEM = `You are a professional audiobook narrator assistant. Reformat the text below to read naturally aloud.
+// Plain punctuation works for OpenAI's TTS models. ElevenLabs' non-v3 models
+// support a small subset of SSML, and eleven_v3 understands its own
+// "audio tags" syntax, which is more expressive than either — so the
+// narrator-markup prompt is tailored to whichever the active TTS engine
+// can actually interpret.
+export type NarratorStyle = "plain" | "audio-tags" | "ssml-breaks";
+
+export function narratorStyleFor(
+	ttsProvider: TtsProvider,
+	elevenLabsModel?: ElevenLabsModel,
+): NarratorStyle {
+	if (ttsProvider !== "elevenlabs") return "plain";
+	return elevenLabsModel === "eleven_v3" ? "audio-tags" : "ssml-breaks";
+}
+
+const NARRATOR_SYSTEM_PLAIN = `You are a professional audiobook narrator assistant. Reformat the text below to read naturally aloud.
 Rules:
 - Do NOT change, add, or remove any words
 - Add an em dash (—) where a narrator would pause briefly: after dialogue attributions, before scene shifts, at strong rhetorical breaks
@@ -18,11 +35,34 @@ Rules:
 - Preserve all paragraph breaks exactly
 - Return ONLY the reformatted text with no preamble or explanation`;
 
+const NARRATOR_SYSTEM_AUDIO_TAGS = `You are a professional audiobook narrator assistant, preparing text for ElevenLabs' eleven_v3 model. Reformat the text below to read naturally aloud.
+Rules:
+- Do NOT change, add, or remove any narrative words
+- Insert [pause], [short pause], or [long pause] audio tags where a narrator would naturally pause: after dialogue attributions, before scene shifts, at strong rhetorical breaks, or for dramatic effect
+- You may sparingly add emotional delivery tags (e.g. [whispers], [sighs], [laughs], [angry]) only where the text clearly implies that tone — do not invent actions the text doesn't support
+- Preserve all paragraph breaks exactly
+- Return ONLY the reformatted text with no preamble or explanation`;
+
+const NARRATOR_SYSTEM_SSML_BREAKS = `You are a professional audiobook narrator assistant, preparing text for an ElevenLabs TTS model that supports a limited subset of SSML. Reformat the text below to read naturally aloud.
+Rules:
+- Do NOT change, add, or remove any words
+- Insert <break time="0.4s" /> where a narrator would pause briefly: after dialogue attributions, before scene shifts, at strong rhetorical breaks
+- Insert <break time="1.0s" /> where a longer dramatic pause belongs: end of a tense sentence, after a revelation, trailing thoughts
+- Preserve all paragraph breaks exactly
+- Return ONLY the reformatted text with no preamble or explanation`;
+
+function systemPromptFor(style: NarratorStyle): string {
+	if (style === "audio-tags") return NARRATOR_SYSTEM_AUDIO_TAGS;
+	if (style === "ssml-breaks") return NARRATOR_SYSTEM_SSML_BREAKS;
+	return NARRATOR_SYSTEM_PLAIN;
+}
+
 async function addNarratorMarkupClaude(
 	anthropic: Anthropic,
 	text: string,
 	chunkSize: number,
 	concurrency: number,
+	systemPrompt: string,
 ): Promise<string> {
 	const rawChunks = splitIntoChunks(text, chunkSize);
 	const marked = await pLimit(
@@ -34,7 +74,7 @@ async function addNarratorMarkupClaude(
 					const response = await anthropic.messages.create({
 						model: "claude-haiku-4-5-20251001",
 						max_tokens: maxTokens,
-						system: NARRATOR_SYSTEM,
+						system: systemPrompt,
 						messages: [{ role: "user", content: chunk }],
 					});
 					const block = response.content[0];
@@ -58,6 +98,7 @@ async function addNarratorMarkupGpt(
 	text: string,
 	chunkSize: number,
 	concurrency: number,
+	systemPrompt: string,
 ): Promise<string> {
 	const rawChunks = splitIntoChunks(text, chunkSize);
 	const marked = await pLimit(
@@ -68,7 +109,7 @@ async function addNarratorMarkupGpt(
 					const response = await openai.chat.completions.create({
 						model: "gpt-4o-mini",
 						messages: [
-							{ role: "system", content: NARRATOR_SYSTEM },
+							{ role: "system", content: systemPrompt },
 							{ role: "user", content: chunk },
 						],
 					});
@@ -94,13 +135,27 @@ export async function addNarratorMarkup(
 	text: string,
 	chunkSize: number,
 	concurrency: number,
+	style: NarratorStyle = "plain",
 ): Promise<string> {
+	const systemPrompt = systemPromptFor(style);
 	if (provider === "claude-haiku") {
 		if (!anthropic)
 			throw new Error("Anthropic client required for claude-haiku provider");
-		return addNarratorMarkupClaude(anthropic, text, chunkSize, concurrency);
+		return addNarratorMarkupClaude(
+			anthropic,
+			text,
+			chunkSize,
+			concurrency,
+			systemPrompt,
+		);
 	}
-	return addNarratorMarkupGpt(openai, text, chunkSize, concurrency);
+	return addNarratorMarkupGpt(
+		openai,
+		text,
+		chunkSize,
+		concurrency,
+		systemPrompt,
+	);
 }
 
 export function detectMarkupProvider(
@@ -116,6 +171,14 @@ export function detectMarkupProvider(
 	return anthropicKey ? "claude-haiku" : "gpt-4o-mini";
 }
 
+// ElevenLabs is used for TTS whenever a key is configured; OpenAI remains the
+// default otherwise (and is always required for markup as a fallback).
+export function detectTtsProvider(
+	elevenLabsKey: string | undefined,
+): TtsProvider {
+	return elevenLabsKey ? "elevenlabs" : "openai";
+}
+
 const PRICING = {
 	claudeHaikuInputPerMTok: 0.8,
 	claudeHaikuOutputPerMTok: 4.0,
@@ -123,6 +186,8 @@ const PRICING = {
 	gpt4oMiniOutputPerMTok: 0.6,
 	tts1PerMChars: 15.0,
 	tts1HdPerMChars: 30.0,
+	// Approximate blended rate across ElevenLabs plans (~$0.15-0.22 / 1k chars).
+	elevenLabsPerMChars: 180.0,
 } as const;
 
 const CHARS_PER_TOKEN = 4;
@@ -135,6 +200,7 @@ export function estimateCosts(
 	chunkSize: number,
 	ttsModel: TtsModel,
 	provider: MarkupProvider,
+	ttsProvider: TtsProvider = "openai",
 ): CostEstimate {
 	let pendingChapters = 0,
 		totalInputChars = 0,
@@ -164,7 +230,11 @@ export function estimateCosts(
 		(inputTokens / 1_000_000) * markupInputRate +
 		(outputTokens / 1_000_000) * markupOutputRate;
 	const ttsRate =
-		ttsModel === "tts-1-hd" ? PRICING.tts1HdPerMChars : PRICING.tts1PerMChars;
+		ttsProvider === "elevenlabs"
+			? PRICING.elevenLabsPerMChars
+			: ttsModel === "tts-1-hd"
+				? PRICING.tts1HdPerMChars
+				: PRICING.tts1PerMChars;
 	const ttsCost = (totalTtsChars / 1_000_000) * ttsRate;
 	return {
 		pendingChapters,

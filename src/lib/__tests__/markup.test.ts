@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	addNarratorMarkup,
 	detectMarkupProvider,
+	detectTtsProvider,
 	estimateCosts,
+	narratorStyleFor,
 } from "../markup";
 import type { Chapter, ChapterRecord } from "../types";
 
@@ -23,6 +25,38 @@ describe("detectMarkupProvider", () => {
 	it("returns gpt-4o-mini when only OpenAI key is present", () => {
 		expect(detectMarkupProvider(undefined, "sk-oai")).toBe("gpt-4o-mini");
 		expect(detectMarkupProvider("", "sk-oai")).toBe("gpt-4o-mini");
+	});
+});
+
+describe("detectTtsProvider", () => {
+	it("returns elevenlabs when a key is present", () => {
+		expect(detectTtsProvider("el-key")).toBe("elevenlabs");
+	});
+
+	it("returns openai when no key is present", () => {
+		expect(detectTtsProvider(undefined)).toBe("openai");
+		expect(detectTtsProvider("")).toBe("openai");
+	});
+});
+
+describe("narratorStyleFor", () => {
+	it("returns plain for openai regardless of elevenLabsModel", () => {
+		expect(narratorStyleFor("openai")).toBe("plain");
+		expect(narratorStyleFor("openai", "eleven_v3")).toBe("plain");
+	});
+
+	it("returns audio-tags for eleven_v3", () => {
+		expect(narratorStyleFor("elevenlabs", "eleven_v3")).toBe("audio-tags");
+	});
+
+	it("returns ssml-breaks for other ElevenLabs models", () => {
+		expect(narratorStyleFor("elevenlabs", "eleven_multilingual_v2")).toBe(
+			"ssml-breaks",
+		);
+		expect(narratorStyleFor("elevenlabs", "eleven_flash_v2_5")).toBe(
+			"ssml-breaks",
+		);
+		expect(narratorStyleFor("elevenlabs")).toBe("ssml-breaks");
 	});
 });
 
@@ -113,6 +147,27 @@ describe("estimateCosts", () => {
 			"claude-haiku",
 		).claudeCost;
 		expect(claudeCost).toBeGreaterThan(gptCost);
+	});
+
+	it("uses ElevenLabs pricing when ttsProvider is elevenlabs", () => {
+		const chapters = [makeChapter(0, 10_000)];
+		const openaiCost = estimateCosts(
+			chapters,
+			{},
+			2000,
+			"tts-1",
+			"gpt-4o-mini",
+			"openai",
+		).ttsCost;
+		const elevenLabsCost = estimateCosts(
+			chapters,
+			{},
+			2000,
+			"tts-1",
+			"gpt-4o-mini",
+			"elevenlabs",
+		).ttsCost;
+		expect(elevenLabsCost).not.toBe(openaiCost);
 	});
 });
 

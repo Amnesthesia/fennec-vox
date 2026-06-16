@@ -7,6 +7,7 @@ interface Props {
 export default function SettingsPanel({ onClose }: Props) {
 	const [anthropicKey, setAnthropicKey] = useState("");
 	const [openaiKey, setOpenaiKey] = useState("");
+	const [elevenLabsKey, setElevenLabsKey] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
 
@@ -14,12 +15,17 @@ export default function SettingsPanel({ onClose }: Props) {
 		void window.api.getCredentials().then((creds) => {
 			setAnthropicKey(creds.anthropicKey);
 			setOpenaiKey(creds.openaiKey);
+			setElevenLabsKey(creds.elevenLabsKey);
 		});
 	}, []);
 
 	const handleSave = async () => {
 		setSaving(true);
-		await window.api.saveCredentials({ anthropicKey, openaiKey });
+		await window.api.saveCredentials({
+			anthropicKey,
+			openaiKey,
+			elevenLabsKey,
+		});
 		setSaving(false);
 		setSaved(true);
 		setTimeout(() => setSaved(false), 2000);
@@ -30,11 +36,15 @@ export default function SettingsPanel({ onClose }: Props) {
 			? `${key.slice(0, 4)}${"•".repeat(Math.min(16, key.length - 8))}${key.slice(-4)}`
 			: key;
 
-	const activeProvider = anthropicKey
+	const activeMarkupProvider = anthropicKey
 		? "Claude Haiku (ANTHROPIC_API_KEY set)"
 		: openaiKey
 			? "GPT-4o mini (fallback)"
 			: "None — add an OpenAI key to continue";
+
+	const activeTtsProvider = elevenLabsKey
+		? "ElevenLabs (ELEVENLABS_API_KEY set)"
+		: "OpenAI (default)";
 
 	return (
 		<div
@@ -51,8 +61,9 @@ export default function SettingsPanel({ onClose }: Props) {
 					<h2>Settings</h2>
 					<p className="modal-sub">
 						API keys are stored locally on your device. Claude Haiku is used for
-						SSML markup when an Anthropic key is present; otherwise GPT-4o mini
-						is used.
+						narrator markup when an Anthropic key is present; otherwise GPT-4o
+						mini is used. ElevenLabs is used for text-to-speech synthesis when
+						an ElevenLabs key is present; otherwise OpenAI is used.
 					</p>
 
 					{/* OpenAI */}
@@ -159,6 +170,58 @@ export default function SettingsPanel({ onClose }: Props) {
 						</div>
 					)}
 
+					{/* ElevenLabs */}
+					<div className="settings-key-label" style={{ marginTop: 8 }}>
+						<span className="section-label" style={{ marginBottom: 0 }}>
+							ElevenLabs (TTS — optional)
+						</span>
+						<button
+							className="settings-get-key-link"
+							type="button"
+							onClick={() =>
+								void window.api.openExternal(
+									"https://elevenlabs.io/app/settings/api-keys",
+								)
+							}
+						>
+							Get key →
+						</button>
+					</div>
+					<div className="key-row" style={{ marginTop: 6 }}>
+						<div className="field">
+							<input
+								type="password"
+								value={elevenLabsKey}
+								placeholder="ElevenLabs API key…"
+								onChange={(e) => setElevenLabsKey(e.target.value)}
+								autoComplete="off"
+								spellCheck={false}
+							/>
+						</div>
+						{elevenLabsKey && (
+							<button
+								className="btn btn-secondary"
+								style={{ fontSize: 11, padding: "5px 8px" }}
+								onClick={() => setElevenLabsKey("")}
+								type="button"
+								title="Clear key"
+							>
+								✕
+							</button>
+						)}
+					</div>
+					{elevenLabsKey && (
+						<div
+							style={{
+								fontSize: 10,
+								color: "var(--text-secondary)",
+								marginBottom: 12,
+							}}
+						>
+							Stored: {maskKey(elevenLabsKey)}
+						</div>
+					)}
+
 					<div className="provider-status">
 						<div
 							className="dot"
@@ -167,7 +230,13 @@ export default function SettingsPanel({ onClose }: Props) {
 							}}
 						/>
 						<span>
-							Active markup provider: <strong>{activeProvider}</strong>
+							Active markup provider: <strong>{activeMarkupProvider}</strong>
+						</span>
+					</div>
+					<div className="provider-status">
+						<div className="dot" style={{ background: "var(--success)" }} />
+						<span>
+							Active TTS provider: <strong>{activeTtsProvider}</strong>
 						</span>
 					</div>
 

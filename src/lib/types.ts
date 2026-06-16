@@ -18,6 +18,49 @@ export function ttsFormat(format: TtsFormat): "mp3" | "opus" | "aac" | "flac" {
 }
 export type TtsModel = "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts";
 
+// ── TTS provider (OpenAI vs ElevenLabs) ───────────────────────────────────────
+
+export type TtsProvider = "openai" | "elevenlabs";
+
+// eleven_v3 is the only model that understands audio tags ([pause], [whispers], …);
+// the others fall back to SSML <break> tags, which they support and v3 does not.
+export type ElevenLabsModel =
+	| "eleven_v3"
+	| "eleven_multilingual_v2"
+	| "eleven_flash_v2_5";
+
+export const DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // "Rachel"
+
+// Stable, publicly-available premade voices — shown as suggestions, but any
+// voice ID (including cloned/custom voices) can be typed into the field.
+export const ELEVENLABS_VOICES: { id: string; name: string }[] = [
+	{ id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel" },
+	{ id: "pNInz6obpgDQGcFmaJgB", name: "Adam" },
+	{ id: "ErXwobaYiN019PkySvjV", name: "Antoni" },
+	{ id: "EXAVITQu4vr4xnSDxMaL", name: "Bella" },
+	{ id: "AZnzlk1XvdvUeBnXmlld", name: "Domi" },
+	{ id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli" },
+	{ id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh" },
+	{ id: "VR6AewLTigWG4xSOukaG", name: "Arnold" },
+	{ id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam" },
+];
+
+// ElevenLabs' TTS API only emits mp3/opus/pcm directly (no aac/flac); m4b/m4a
+// chapters are synthesised as mp3 and transcoded to AAC when muxed (see audio.ts).
+export function elevenLabsTtsFormat(format: TtsFormat): "mp3" | "opus" {
+	return format === "opus" ? "opus" : "mp3";
+}
+
+// The format actually requested from the active TTS provider's API.
+export function innerTtsFormat(
+	format: TtsFormat,
+	provider: TtsProvider,
+): "mp3" | "opus" | "aac" | "flac" {
+	return provider === "elevenlabs"
+		? elevenLabsTtsFormat(format)
+		: ttsFormat(format);
+}
+
 export interface Chapter {
 	index: number;
 	spineIndex: number;

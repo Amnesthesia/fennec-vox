@@ -1,5 +1,12 @@
-import type { TtsFormat, TtsModel, TtsVoice } from "@shared/ipc";
+import type {
+	ElevenLabsModel,
+	TtsFormat,
+	TtsModel,
+	TtsProvider,
+	TtsVoice,
+} from "@shared/ipc";
 import { useEffect, useRef, useState } from "react";
+import { ELEVENLABS_VOICES } from "../../../lib/types";
 
 const ALL_VOICES: TtsVoice[] = [
 	"alloy",
@@ -37,6 +44,11 @@ interface Props {
 	onConcurrencyChange: (v: number) => void;
 	ttsInstructions: string;
 	onTtsInstructionsChange: (v: string) => void;
+	ttsProvider: TtsProvider;
+	elevenLabsVoiceId: string;
+	onElevenLabsVoiceIdChange: (v: string) => void;
+	elevenLabsModel: ElevenLabsModel;
+	onElevenLabsModelChange: (v: ElevenLabsModel) => void;
 }
 
 function slugToTitle(slug: string): string {
@@ -56,6 +68,11 @@ export default function ConversionConfig({
 	onConcurrencyChange,
 	ttsInstructions,
 	onTtsInstructionsChange,
+	ttsProvider,
+	elevenLabsVoiceId,
+	onElevenLabsVoiceIdChange,
+	elevenLabsModel,
+	onElevenLabsModelChange,
 }: Props) {
 	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [previewing, setPreviewing] = useState(false);
@@ -116,65 +133,93 @@ export default function ConversionConfig({
 
 	return (
 		<>
-			<div className="section">
-				<div className="section-label">
-					Voice
-					{previewing && <span className="preview-badge">▶ playing</span>}
-				</div>
-				<div className="field">
-					<div
-						style={{
-							display: "flex",
-							gap: 6,
-							alignItems: "center",
-							position: "relative",
-						}}
-					>
-						<select
-							style={{ flex: 1 }}
-							value={voice}
-							onChange={(e) =>
-								void handleVoiceChange(e.target.value as TtsVoice)
-							}
-						>
-							{ALL_VOICES.filter(
-								(v) =>
-									ttsModel === "gpt-4o-mini-tts" || !MINI_TTS_ONLY.includes(v),
-							).map((v) => (
-								<option key={v} value={v}>
-									{v.charAt(0).toUpperCase() + v.slice(1)}
+			{ttsProvider === "elevenlabs" ? (
+				<div className="section">
+					<div className="section-label">Voice</div>
+					<div className="field">
+						<input
+							list="elevenlabs-voice-list"
+							value={elevenLabsVoiceId}
+							onChange={(e) => onElevenLabsVoiceIdChange(e.target.value)}
+							placeholder="ElevenLabs voice ID…"
+							spellCheck={false}
+							autoComplete="off"
+						/>
+						<datalist id="elevenlabs-voice-list">
+							{ELEVENLABS_VOICES.map((v) => (
+								<option key={v.id} value={v.id}>
+									{v.name}
 								</option>
 							))}
-						</select>
-
-						<button
-							className="btn-icon"
-							title="Preview a specific poem"
-							style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
-							onClick={() => setShowPoems((v) => !v)}
-						>
-							▶
-						</button>
-
-						{showPoems && (
-							<div className="poem-popover" ref={popoverRef}>
-								{poems.map((slug) => (
-									<button
-										key={slug}
-										className="poem-popover-item"
-										onClick={() => {
-											playSlug(voice, slug);
-											setShowPoems(false);
-										}}
-									>
-										{slugToTitle(slug)}
-									</button>
-								))}
-							</div>
-						)}
+						</datalist>
+						<p className="field-note">
+							Pick a premade voice from the list or paste any voice ID
+							(including custom/cloned voices) from your ElevenLabs account.
+						</p>
 					</div>
 				</div>
-			</div>
+			) : (
+				<div className="section">
+					<div className="section-label">
+						Voice
+						{previewing && <span className="preview-badge">▶ playing</span>}
+					</div>
+					<div className="field">
+						<div
+							style={{
+								display: "flex",
+								gap: 6,
+								alignItems: "center",
+								position: "relative",
+							}}
+						>
+							<select
+								style={{ flex: 1 }}
+								value={voice}
+								onChange={(e) =>
+									void handleVoiceChange(e.target.value as TtsVoice)
+								}
+							>
+								{ALL_VOICES.filter(
+									(v) =>
+										ttsModel === "gpt-4o-mini-tts" ||
+										!MINI_TTS_ONLY.includes(v),
+								).map((v) => (
+									<option key={v} value={v}>
+										{v.charAt(0).toUpperCase() + v.slice(1)}
+									</option>
+								))}
+							</select>
+
+							<button
+								className="btn-icon"
+								title="Preview a specific poem"
+								style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
+								onClick={() => setShowPoems((v) => !v)}
+							>
+								▶
+							</button>
+
+							{showPoems && (
+								<div className="poem-popover" ref={popoverRef}>
+									{poems.map((slug) => (
+										<button
+											key={slug}
+											className="poem-popover-item"
+											onClick={() => {
+												playSlug(voice, slug);
+												setShowPoems(false);
+											}}
+										>
+											{slugToTitle(slug)}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					</div>
+				</div>
+			)}
 
 			<div className="section">
 				<button
@@ -210,27 +255,49 @@ export default function ConversionConfig({
 								))}
 							</select>
 						</div>
-						<div className="field">
-							<label>Text-to-Speech Model</label>
-							<select
-								value={ttsModel}
-								onChange={(e) => {
-									const m = e.target.value as TtsModel;
-									onTtsModelChange(m);
-									if (
-										m !== "gpt-4o-mini-tts" &&
-										MINI_TTS_ONLY.includes(voice)
-									) {
-										onVoiceChange("alloy");
+						{ttsProvider === "elevenlabs" ? (
+							<div className="field">
+								<label>ElevenLabs Model</label>
+								<select
+									value={elevenLabsModel}
+									onChange={(e) =>
+										onElevenLabsModelChange(e.target.value as ElevenLabsModel)
 									}
-								}}
-							>
-								<option value="tts-1">Standard (tts-1)</option>
-								<option value="tts-1-hd">High Quality (tts-1-hd)</option>
-								<option value="gpt-4o-mini-tts">GPT-4o Mini TTS</option>
-							</select>
-						</div>
-						{ttsModel === "gpt-4o-mini-tts" && (
+								>
+									<option value="eleven_v3">
+										Eleven v3 — richest narration (audio tags)
+									</option>
+									<option value="eleven_multilingual_v2">
+										Eleven Multilingual v2 (SSML breaks)
+									</option>
+									<option value="eleven_flash_v2_5">
+										Eleven Flash v2.5 — fastest (SSML breaks)
+									</option>
+								</select>
+							</div>
+						) : (
+							<div className="field">
+								<label>Text-to-Speech Model</label>
+								<select
+									value={ttsModel}
+									onChange={(e) => {
+										const m = e.target.value as TtsModel;
+										onTtsModelChange(m);
+										if (
+											m !== "gpt-4o-mini-tts" &&
+											MINI_TTS_ONLY.includes(voice)
+										) {
+											onVoiceChange("alloy");
+										}
+									}}
+								>
+									<option value="tts-1">Standard (tts-1)</option>
+									<option value="tts-1-hd">High Quality (tts-1-hd)</option>
+									<option value="gpt-4o-mini-tts">GPT-4o Mini TTS</option>
+								</select>
+							</div>
+						)}
+						{ttsProvider === "openai" && ttsModel === "gpt-4o-mini-tts" && (
 							<div className="field">
 								<label>Narration style</label>
 								<textarea

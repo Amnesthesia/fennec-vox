@@ -1,6 +1,11 @@
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import type { ConversionOptions, TtsModel, TtsVoice } from "@shared/ipc";
+import type {
+	ConversionOptions,
+	Credentials,
+	TtsModel,
+	TtsVoice,
+} from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { Buffer } from "buffer";
 import { type BrowserWindow, dialog, ipcMain, shell } from "electron";
@@ -9,11 +14,15 @@ import OpenAI from "openai";
 import { buildM4b, resolveFfmpegBin } from "../lib/audio";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
-import { detectMarkupProvider, estimateCosts } from "../lib/markup";
+import {
+	detectMarkupProvider,
+	detectTtsProvider,
+	estimateCosts,
+} from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
 import { padded, safeFilename } from "../lib/text";
 import type { Chapter, ChapterRecord, Progress, TtsFormat } from "../lib/types";
-import { ttsFormat } from "../lib/types";
+import { innerTtsFormat } from "../lib/types";
 import { getCredentials, saveCredentials } from "./keychain";
 
 interface CancellationToken {
@@ -147,12 +156,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 	ipcMain.handle(IPC.GET_CREDENTIALS, () => getCredentials());
 
-	ipcMain.handle(
-		IPC.SAVE_CREDENTIALS,
-		(_event, creds: { anthropicKey: string; openaiKey: string }) => {
-			return saveCredentials(creds);
-		},
-	);
+	ipcMain.handle(IPC.SAVE_CREDENTIALS, (_event, creds: Credentials) => {
+		return saveCredentials(creds);
+	});
 
 	// ── Open external URL ─────────────────────────────────────────────────────
 
@@ -201,7 +207,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 		async (_event, opts: ConversionOptions) => {
 			if (activeToken) return { error: "A conversion is already running." };
 
-			const { anthropicKey, openaiKey } = await getCredentials();
+			const { anthropicKey, openaiKey, elevenLabsKey } = await getCredentials();
 			if (!openaiKey)
 				return {
 					error: "OpenAI API key is required. Configure it in Settings.",
@@ -213,6 +219,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			} catch (e) {
 				return { error: (e as Error).message };
 			}
+			const ttsProvider = detectTtsProvider(elevenLabsKey || undefined);
 
 			const send = (channel: string, payload?: unknown) => {
 				if (!win.isDestroyed()) win.webContents.send(channel, payload);
@@ -266,7 +273,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					await saveProgress(workDir, progress);
 
 					// Re-process chapters with a mismatched cached format
-					const expectedExt = `.${ttsFormat(format)}`;
+					const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
 					for (const ch of chapters) {
 						const rec = progress.completedChapters[ch.index];
 						if (rec && !rec.file.endsWith(expectedExt)) {
@@ -280,6 +287,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						opts.chunkSize,
 						opts.ttsModel,
 						provider,
+						ttsProvider,
 					);
 					const completedIndices = Object.keys(progress.completedChapters).map(
 						Number,
@@ -297,7 +305,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					);
 					send(
 						IPC.CONVERSION_LOG,
-						`Chapters: ${chapters.length}  |  Markup provider: ${provider}`,
+						`Chapters: ${chapters.length}  |  Markup provider: ${provider}  |  TTS: ${ttsProvider}`,
 					);
 					send(
 						IPC.CONVERSION_LOG,
@@ -328,6 +336,10 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						voice: opts.voice,
 						format,
 						ttsModel: opts.ttsModel,
+						ttsProvider,
+						elevenLabsApiKey: elevenLabsKey || undefined,
+						elevenLabsVoiceId: opts.elevenLabsVoiceId,
+						elevenLabsModel: opts.elevenLabsModel,
 						chunkSize: opts.chunkSize,
 						concurrency: opts.concurrency,
 						ttsInstructions: opts.ttsInstructions,

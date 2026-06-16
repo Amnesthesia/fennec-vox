@@ -2,6 +2,7 @@ const SERVICE = "Fennec Vox";
 const ACCOUNTS = {
 	anthropic: "anthropic-api-key",
 	openai: "openai-api-key",
+	elevenlabs: "elevenlabs-api-key",
 } as const;
 
 function getKeytar() {
@@ -16,18 +17,28 @@ function getKeytar() {
 export async function getCredentials(): Promise<{
 	anthropicKey: string;
 	openaiKey: string;
+	elevenLabsKey: string;
 }> {
 	const keytar = getKeytar();
-	if (!keytar) return { anthropicKey: "", openaiKey: "" };
-	const [anthropicKey, openaiKey] = await Promise.all([
+	if (!keytar) return { anthropicKey: "", openaiKey: "", elevenLabsKey: "" };
+	const [anthropicKey, openaiKey, elevenLabsKey] = await Promise.all([
 		keytar.getPassword(SERVICE, ACCOUNTS.anthropic),
 		keytar.getPassword(SERVICE, ACCOUNTS.openai),
+		keytar.getPassword(SERVICE, ACCOUNTS.elevenlabs),
 	]);
-	return { anthropicKey: anthropicKey ?? "", openaiKey: openaiKey ?? "" };
+	return {
+		anthropicKey: anthropicKey ?? "",
+		openaiKey: openaiKey ?? "",
+		elevenLabsKey: elevenLabsKey ?? "",
+	};
 }
 
 export async function saveCredentials(
-	creds: Partial<{ anthropicKey: string; openaiKey: string }>,
+	creds: Partial<{
+		anthropicKey: string;
+		openaiKey: string;
+		elevenLabsKey: string;
+	}>,
 ): Promise<void> {
 	const keytar = getKeytar();
 	if (!keytar) return;
@@ -46,6 +57,15 @@ export async function saveCredentials(
 			creds.openaiKey
 				? keytar.setPassword(SERVICE, ACCOUNTS.openai, creds.openaiKey)
 				: keytar.deletePassword(SERVICE, ACCOUNTS.openai).then(() => undefined),
+		);
+	}
+	if (creds.elevenLabsKey !== undefined) {
+		ops.push(
+			creds.elevenLabsKey
+				? keytar.setPassword(SERVICE, ACCOUNTS.elevenlabs, creds.elevenLabsKey)
+				: keytar
+						.deletePassword(SERVICE, ACCOUNTS.elevenlabs)
+						.then(() => undefined),
 		);
 	}
 	await Promise.all(ops);

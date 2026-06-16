@@ -33,6 +33,12 @@ export type TtsVoice =
 export type TtsFormat = "mp3" | "opus" | "aac" | "flac" | "m4b" | "m4a";
 export type TtsModel = "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts";
 
+export type TtsProvider = "openai" | "elevenlabs";
+export type ElevenLabsModel =
+	| "eleven_v3"
+	| "eleven_multilingual_v2"
+	| "eleven_flash_v2_5";
+
 export interface ConversionOptions {
 	epubPath: string;
 	outputDir: string;
@@ -44,11 +50,15 @@ export interface ConversionOptions {
 	resumeFrom?: number;
 	ttsInstructions?: string;
 	redoTts?: boolean;
+	// Used instead of `voice`/`ttsModel` when an ElevenLabs key is configured.
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
 }
 
 export interface Credentials {
 	anthropicKey: string;
 	openaiKey: string;
+	elevenLabsKey: string;
 }
 
 // Mirrors ProgressEvent in convert.ts (re-declared to avoid cross-package import)

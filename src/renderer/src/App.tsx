@@ -1,11 +1,13 @@
 import type {
 	ConversionOptions,
+	ElevenLabsModel,
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
 	TtsVoice,
 } from "@shared/ipc";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
 import FilePicker from "./components/FilePicker";
 import LogViewer from "./components/LogViewer";
@@ -53,6 +55,14 @@ export default function App() {
 	);
 	const [showSettings, setShowSettings] = useState(false);
 
+	const [elevenLabsKey, setElevenLabsKey] = useState("");
+	const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState(
+		DEFAULT_ELEVENLABS_VOICE_ID,
+	);
+	const [elevenLabsModel, setElevenLabsModel] =
+		useState<ElevenLabsModel>("eleven_v3");
+	const ttsProvider = elevenLabsKey ? "elevenlabs" : "openai";
+
 	const [hasOpenAiKey, setHasOpenAiKey] = useState<boolean | null>(null);
 	const [keyInput, setKeyInput] = useState("");
 	const [saving, setSaving] = useState(false);
@@ -70,6 +80,7 @@ export default function App() {
 	useEffect(() => {
 		void window.api.getCredentials().then((creds) => {
 			setHasOpenAiKey(!!creds.openaiKey);
+			setElevenLabsKey(creds.elevenLabsKey);
 		});
 	}, []);
 
@@ -213,6 +224,10 @@ export default function App() {
 			concurrency,
 			ttsInstructions: ttsInstructions || undefined,
 			redoTts: redoTts || undefined,
+			elevenLabsVoiceId:
+				ttsProvider === "elevenlabs" ? elevenLabsVoiceId : undefined,
+			elevenLabsModel:
+				ttsProvider === "elevenlabs" ? elevenLabsModel : undefined,
 		};
 		const result = await window.api.startConversion(opts);
 		console.debug("Conversion start result:", result);
@@ -343,6 +358,11 @@ export default function App() {
 						onConcurrencyChange={setConcurrency}
 						ttsInstructions={ttsInstructions}
 						onTtsInstructionsChange={setTtsInstructions}
+						ttsProvider={ttsProvider}
+						elevenLabsVoiceId={elevenLabsVoiceId}
+						onElevenLabsVoiceIdChange={setElevenLabsVoiceId}
+						elevenLabsModel={elevenLabsModel}
+						onElevenLabsModelChange={setElevenLabsModel}
 					/>
 
 					<div

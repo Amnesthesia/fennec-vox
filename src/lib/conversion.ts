@@ -1,7 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { Buffer } from "buffer";
 import type OpenAI from "openai";
-import { addNarratorMarkup } from "./markup";
+import { synthesiseTextElevenLabs } from "./elevenlabs";
+import { addNarratorMarkup, narratorStyleFor } from "./markup";
 import { pLimit } from "./pLimit";
 import { padded, splitIntoChunks } from "./text";
 import type { ChunkCache } from "./tts";
@@ -9,13 +10,15 @@ import { synthesiseText } from "./tts";
 import type {
 	Chapter,
 	ChapterRecord,
+	ElevenLabsModel,
 	MarkupProvider,
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
+	TtsProvider,
 	TtsVoice,
 } from "./types";
-import { ttsFormat } from "./types";
+import { DEFAULT_ELEVENLABS_VOICE_ID, innerTtsFormat } from "./types";
 
 const TTS_MAX_CHARS = 4000;
 
@@ -47,13 +50,19 @@ interface ProcessorOpts {
 	provider: MarkupProvider;
 	anthropic: Anthropic | null;
 	openai: OpenAI;
+	// OpenAI TTS options (used when ttsProvider is "openai", the default).
 	voice: TtsVoice;
-	format: TtsFormat;
 	ttsModel: TtsModel;
+	ttsInstructions?: string;
+	// ElevenLabs TTS options (used when ttsProvider is "elevenlabs").
+	ttsProvider?: TtsProvider;
+	elevenLabsApiKey?: string;
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
+	format: TtsFormat;
 	chunkSize: number;
 	concurrency: number;
 	total: number;
-	ttsInstructions?: string;
 	io: ConversionIO;
 }
 
@@ -69,6 +78,10 @@ export async function processChapter(
 		voice,
 		format,
 		ttsModel,
+		ttsProvider = "openai",
+		elevenLabsApiKey,
+		elevenLabsVoiceId,
+		elevenLabsModel,
 		chunkSize,
 		concurrency,
 		total,
@@ -81,7 +94,8 @@ export async function processChapter(
 		`\n── Chapter ${index}/${total - 1}: "${title}" (${text.length.toLocaleString()} chars) ──`,
 	);
 
-	const markupKey = `chapter-${padded(index)}.txt`;
+	const narratorStyle = narratorStyleFor(ttsProvider, elevenLabsModel);
+	const markupKey = `chapter-${padded(index)}.${narratorStyle}.txt`;
 	let ttsText: string;
 
 	const cached = await io.getMarkupCache(markupKey);
@@ -99,30 +113,48 @@ export async function processChapter(
 			text,
 			chunkSize,
 			concurrency,
+			narratorStyle,
 		);
 		await io.setMarkupCache(markupKey, ttsText);
 	}
 
-	const innerFmt = ttsFormat(format);
+	const innerFmt = innerTtsFormat(format, ttsProvider);
 	const ttsChunks = splitIntoChunks(ttsText, TTS_MAX_CHARS).length;
 	io.onProgress({ type: "chapter_tts", index, chunks: ttsChunks });
-	io.onLog(`  [${index}][2/2] Synthesising audio (${ttsChunks} TTS chunk(s))…`);
-
-	const audioBuffer = await synthesiseText(
-		openai,
-		ttsText,
-		voice,
-		innerFmt,
-		ttsModel,
-		concurrency,
-		(i) => io.chunkKey(index, i, innerFmt),
-		io.audioChunkCache,
-		(i, tot, wasCached) =>
-			io.onLog(
-				`  [${index}]       TTS chunk ${i + 1}/${tot}${wasCached ? " (cached)" : ""}…`,
-			),
-		ttsInstructions,
+	io.onLog(
+		`  [${index}][2/2] Synthesising audio via ${ttsProvider} (${ttsChunks} TTS chunk(s))…`,
 	);
+
+	const onTtsChunk = (i: number, tot: number, wasCached: boolean) =>
+		io.onLog(
+			`  [${index}]       TTS chunk ${i + 1}/${tot}${wasCached ? " (cached)" : ""}…`,
+		);
+
+	const audioBuffer =
+		ttsProvider === "elevenlabs"
+			? await synthesiseTextElevenLabs(
+					elevenLabsApiKey ?? "",
+					ttsText,
+					elevenLabsVoiceId || DEFAULT_ELEVENLABS_VOICE_ID,
+					format,
+					elevenLabsModel ?? "eleven_multilingual_v2",
+					concurrency,
+					(i) => io.chunkKey(index, i, innerFmt),
+					io.audioChunkCache,
+					onTtsChunk,
+				)
+			: await synthesiseText(
+					openai,
+					ttsText,
+					voice,
+					innerFmt,
+					ttsModel,
+					concurrency,
+					(i) => io.chunkKey(index, i, innerFmt),
+					io.audioChunkCache,
+					onTtsChunk,
+					ttsInstructions,
+				);
 
 	const file = await io.saveChapterAudio(index, audioBuffer, innerFmt);
 	io.onLog(
@@ -148,9 +180,13 @@ export interface RunConversionOpts {
 	voice: TtsVoice;
 	format: TtsFormat;
 	ttsModel: TtsModel;
+	ttsInstructions?: string;
+	ttsProvider?: TtsProvider;
+	elevenLabsApiKey?: string;
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
 	chunkSize: number;
 	concurrency: number;
-	ttsInstructions?: string;
 	io: ConversionIO;
 	bookTitle?: string;
 	bookAuthor?: string;
@@ -185,6 +221,10 @@ export async function runConversion(
 		voice: opts.voice,
 		format: opts.format,
 		ttsModel: opts.ttsModel,
+		ttsProvider: opts.ttsProvider,
+		elevenLabsApiKey: opts.elevenLabsApiKey,
+		elevenLabsVoiceId: opts.elevenLabsVoiceId,
+		elevenLabsModel: opts.elevenLabsModel,
 		chunkSize: opts.chunkSize,
 		concurrency: opts.concurrency,
 		total: chapters.length,

@@ -5,7 +5,11 @@ import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
 import { getCredentials, saveCredentials } from "../lib/credentials/browser";
 import { extractChapters as extractEpubBrowser } from "../lib/epub/browser";
-import { detectMarkupProvider, estimateCosts } from "../lib/markup";
+import {
+	detectMarkupProvider,
+	detectTtsProvider,
+	estimateCosts,
+} from "../lib/markup";
 import { extractChaptersPdf as extractPdfBrowser } from "../lib/pdf/browser";
 import type {
 	Chapter,
@@ -13,6 +17,7 @@ import type {
 	ProgressEvent,
 	TtsFormat,
 } from "../lib/types";
+import { innerTtsFormat } from "../lib/types";
 
 // ── Internal state ────────────────────────────────────────────────────────────
 
@@ -115,6 +120,7 @@ export const browserApi = {
 	saveCredentials(c: {
 		anthropicKey: string;
 		openaiKey: string;
+		elevenLabsKey: string;
 	}): Promise<void> {
 		return saveCredentials(c);
 	},
@@ -162,7 +168,7 @@ export const browserApi = {
 
 		stopRequested = false;
 
-		const { anthropicKey, openaiKey } = await getCredentials();
+		const { anthropicKey, openaiKey, elevenLabsKey } = await getCredentials();
 		if (!openaiKey)
 			return { error: "OpenAI API key is required. Configure it in Settings." };
 
@@ -172,6 +178,7 @@ export const browserApi = {
 		} catch (e) {
 			return { error: (e as Error).message };
 		}
+		const ttsProvider = detectTtsProvider(elevenLabsKey || undefined);
 
 		// Run async — return immediately so the UI can subscribe to events first
 		void (async () => {
@@ -207,6 +214,7 @@ export const browserApi = {
 					opts.chunkSize,
 					opts.ttsModel,
 					provider,
+					ttsProvider,
 				);
 				void estimate;
 
@@ -218,7 +226,9 @@ export const browserApi = {
 					completed: [],
 				});
 				emitLog(`Book: "${metadata.title}" by ${metadata.author}`);
-				emitLog(`Chapters: ${chapters.length}  |  Markup: ${provider}`);
+				emitLog(
+					`Chapters: ${chapters.length}  |  Markup: ${provider}  |  TTS: ${ttsProvider}`,
+				);
 
 				const anthropic = anthropicKey
 					? new Anthropic({
@@ -241,6 +251,10 @@ export const browserApi = {
 					voice: opts.voice,
 					format: opts.format as TtsFormat,
 					ttsModel: opts.ttsModel,
+					ttsProvider,
+					elevenLabsApiKey: elevenLabsKey || undefined,
+					elevenLabsVoiceId: opts.elevenLabsVoiceId,
+					elevenLabsModel: opts.elevenLabsModel,
 					chunkSize: opts.chunkSize,
 					concurrency: opts.concurrency,
 					ttsInstructions: opts.ttsInstructions,
@@ -253,8 +267,9 @@ export const browserApi = {
 					return;
 				}
 
-				// Download the result
-				const ext = opts.format;
+				// Download the result (named after the format actually synthesised,
+				// since ElevenLabs returns mp3/opus regardless of the requested format)
+				const ext = innerTtsFormat(opts.format as TtsFormat, ttsProvider);
 				const mimeTypes: Record<string, string> = {
 					mp3: "audio/mpeg",
 					opus: "audio/ogg",
