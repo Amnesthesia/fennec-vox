@@ -1,3 +1,8 @@
+// epub2 re-exports the epub module's default export
+declare module "epub2" {
+	export { default } from "epub";
+}
+
 declare module "epub" {
 	import { EventEmitter } from "node:events";
 
