@@ -59,6 +59,8 @@ ${"Content of chapter two. ".repeat(10)}
 	it("assigns sequential indices", () => {
 		const text = `Chapter 1\n${"x".repeat(300)}\n\nChapter 2\n${"x".repeat(300)}`;
 		const chapters = splitPdfIntoChapters(text, "Book");
-		chapters.forEach((ch, i) => expect(ch.index).toBe(i));
+		chapters.forEach((ch, i) => {
+			expect(ch.index).toBe(i);
+		});
 	});
 });

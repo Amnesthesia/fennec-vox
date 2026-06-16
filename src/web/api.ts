@@ -30,7 +30,9 @@ const completeListeners: Set<CompleteCb> = new Set();
 const errorListeners: Set<ErrorCb> = new Set();
 
 function emitProgress(e: ProgressEvent) {
-	progressListeners.forEach((cb) => cb(e));
+	progressListeners.forEach((cb) => {
+		cb(e);
+	});
 }
 function emitLog(msg: string) {
 	logListeners.forEach((cb) => {
@@ -38,7 +40,9 @@ function emitLog(msg: string) {
 	});
 }
 function emitComplete(e: ProgressEvent & { type: "complete" }) {
-	completeListeners.forEach((cb) => cb(e));
+	completeListeners.forEach((cb) => {
+		cb(e);
+	});
 }
 function emitError(msg: string) {
 	errorListeners.forEach((cb) => {

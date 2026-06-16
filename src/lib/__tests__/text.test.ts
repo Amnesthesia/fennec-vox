@@ -57,20 +57,26 @@ describe("splitIntoChunks", () => {
 			"First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence.";
 		const chunks = splitIntoChunks(text, 30);
 		expect(chunks.length).toBeGreaterThan(1);
-		chunks.forEach((c) => expect(c.length).toBeLessThanOrEqual(30));
+		chunks.forEach((c) => {
+			expect(c.length).toBeLessThanOrEqual(30);
+		});
 	});
 
 	it("handles text with no breaks by splitting by word", () => {
 		const text = "a ".repeat(100).trim();
 		const chunks = splitIntoChunks(text, 50);
 		expect(chunks.length).toBeGreaterThan(1);
-		chunks.forEach((c) => expect(c.length).toBeLessThanOrEqual(50));
+		chunks.forEach((c) => {
+			expect(c.length).toBeLessThanOrEqual(50);
+		});
 	});
 
 	it("does not produce empty chunks", () => {
 		const text = "Para 1.\n\n\n\nPara 2.\n\nPara 3.";
 		const chunks = splitIntoChunks(text, 20);
-		chunks.forEach((c) => expect(c.trim()).not.toBe(""));
+		chunks.forEach((c) => {
+			expect(c.trim()).not.toBe("");
+		});
 	});
 
 	it("preserves all content across chunks", () => {
