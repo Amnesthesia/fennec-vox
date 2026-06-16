@@ -182,6 +182,15 @@ async function main() {
 	});
 	console.log(`\nWrote manifest.json`);
 
+	// Poem text, keyed by slug — used at runtime to synthesise live previews for
+	// providers (like ElevenLabs) that aren't pre-rendered into static mp3 files.
+	const poemTexts: Record<string, string> = {};
+	for (const poem of poems) poemTexts[poem.slug] = poem.text;
+	await fs.writeJson(path.join(OUT_DIR, "poems.json"), poemTexts, {
+		spaces: 2,
+	});
+	console.log(`Wrote poems.json`);
+
 	if (errors > 0) {
 		console.error(`\nDone with ${errors} error(s).`);
 		process.exit(1);

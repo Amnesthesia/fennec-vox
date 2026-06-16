@@ -1,9 +1,8 @@
 import type {
 	ConversionOptions,
 	Credentials,
+	PreviewVoiceOpts,
 	ProgressEvent,
-	TtsModel,
-	TtsVoice,
 } from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { contextBridge, ipcRenderer } from "electron";
@@ -25,11 +24,9 @@ const api = {
 		ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
 	// Voice preview
-	previewVoice: (opts: {
-		voice: TtsVoice;
-		model: TtsModel;
-		instructions?: string;
-	}): Promise<{ audio?: string; error?: string }> =>
+	previewVoice: (
+		opts: PreviewVoiceOpts,
+	): Promise<{ audio?: string; error?: string }> =>
 		ipcRenderer.invoke(IPC.PREVIEW_VOICE, opts),
 
 	// Conversion

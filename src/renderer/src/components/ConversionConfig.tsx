@@ -76,17 +76,13 @@ export default function ConversionConfig({
 }: Props) {
 	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [previewing, setPreviewing] = useState(false);
+	const [synthesizing, setSynthesizing] = useState(false);
 	const [showPoems, setShowPoems] = useState(false);
 	const [poems, setPoems] = useState<string[]>([]);
+	const [poemTexts, setPoemTexts] = useState<Record<string, string>>({});
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const popoverRef = useRef<HTMLDivElement | null>(null);
-
-	// Load manifest once and keep poem slugs in state
-	useEffect(() => {
-		getManifest()
-			.then((m) => setPoems(m[voice] ?? []))
-			.catch(() => {});
-	}, [voice]);
+	const elPreviewCache = useRef<Map<string, string>>(new Map());
 
 	// Update poem list when voice changes
 	useEffect(() => {
@@ -94,6 +90,14 @@ export default function ConversionConfig({
 			.then((m) => setPoems(m[voice] ?? []))
 			.catch(() => {});
 	}, [voice]);
+
+	// Load poem texts once — used to synthesise live ElevenLabs previews
+	useEffect(() => {
+		fetch("./previews/poems.json")
+			.then((res) => res.json())
+			.then((data: Record<string, string>) => setPoemTexts(data))
+			.catch(() => {});
+	}, []);
 
 	// Close popover on outside click
 	useEffect(() => {
@@ -131,31 +135,140 @@ export default function ConversionConfig({
 		playSlug(v, slugs[Math.floor(Math.random() * slugs.length)]!);
 	};
 
+	// ElevenLabs voices have no pre-rendered previews, so synthesise the poem
+	// live via the ElevenLabs API (cached per voice/model/poem for this session).
+	const playElevenLabsPoem = async (voiceId: string, slug: string) => {
+		const text = poemTexts[slug];
+		if (!text || !voiceId) return;
+		if (audioRef.current) {
+			audioRef.current.pause();
+			audioRef.current = null;
+		}
+		const playBase64 = (audio64: string) => {
+			setPreviewing(true);
+			const audio = new Audio(`data:audio/mpeg;base64,${audio64}`);
+			audioRef.current = audio;
+			audio.play().catch(() => {});
+			audio.onended = () => setPreviewing(false);
+			audio.onerror = () => setPreviewing(false);
+		};
+
+		const cacheKey = `${voiceId}|${elevenLabsModel}|${slug}`;
+		const cached = elPreviewCache.current.get(cacheKey);
+		if (cached) {
+			playBase64(cached);
+			return;
+		}
+
+		setSynthesizing(true);
+		try {
+			const result = await window.api.previewVoice({
+				ttsProvider: "elevenlabs",
+				text,
+				elevenLabsVoiceId: voiceId,
+				elevenLabsModel,
+			});
+			setSynthesizing(false);
+			if (result.error || !result.audio) return;
+			elPreviewCache.current.set(cacheKey, result.audio);
+			playBase64(result.audio);
+		} catch {
+			setSynthesizing(false);
+		}
+	};
+
+	const handleElevenLabsVoiceChange = (id: string) => {
+		onElevenLabsVoiceIdChange(id);
+		const slugs = Object.keys(poemTexts);
+		if (slugs.length === 0) return;
+		void playElevenLabsPoem(
+			id,
+			slugs[Math.floor(Math.random() * slugs.length)]!,
+		);
+	};
+
 	return (
 		<>
 			{ttsProvider === "elevenlabs" ? (
 				<div className="section">
-					<div className="section-label">Voice</div>
+					<div className="section-label">
+						Voice
+						{synthesizing && (
+							<span className="preview-badge">⏳ synthesizing…</span>
+						)}
+						{!synthesizing && previewing && (
+							<span className="preview-badge">▶ playing</span>
+						)}
+					</div>
 					<div className="field">
-						<input
-							list="elevenlabs-voice-list"
-							value={elevenLabsVoiceId}
-							onChange={(e) => onElevenLabsVoiceIdChange(e.target.value)}
-							placeholder="ElevenLabs voice ID…"
-							spellCheck={false}
-							autoComplete="off"
-						/>
-						<datalist id="elevenlabs-voice-list">
-							{ELEVENLABS_VOICES.map((v) => (
-								<option key={v.id} value={v.id}>
-									{v.name}
-								</option>
-							))}
-						</datalist>
-						<p className="field-note">
-							Pick a premade voice from the list or paste any voice ID
-							(including custom/cloned voices) from your ElevenLabs account.
-						</p>
+						<div
+							style={{
+								display: "flex",
+								gap: 6,
+								alignItems: "center",
+								position: "relative",
+							}}
+						>
+							<select
+								style={{ flex: 1 }}
+								value={
+									ELEVENLABS_VOICES.some((v) => v.id === elevenLabsVoiceId)
+										? elevenLabsVoiceId
+										: "__custom__"
+								}
+								onChange={(e) => {
+									const val = e.target.value;
+									if (val === "__custom__") {
+										onElevenLabsVoiceIdChange("");
+										return;
+									}
+									handleElevenLabsVoiceChange(val);
+								}}
+							>
+								{ELEVENLABS_VOICES.map((v) => (
+									<option key={v.id} value={v.id}>
+										{v.name}
+									</option>
+								))}
+								<option value="__custom__">Custom voice ID…</option>
+							</select>
+
+							<button
+								className="btn-icon"
+								title="Preview a specific poem"
+								style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
+								onClick={() => setShowPoems((v) => !v)}
+							>
+								▶
+							</button>
+
+							{showPoems && (
+								<div className="poem-popover" ref={popoverRef}>
+									{Object.keys(poemTexts).map((slug) => (
+										<button
+											key={slug}
+											className="poem-popover-item"
+											onClick={() => {
+												void playElevenLabsPoem(elevenLabsVoiceId, slug);
+												setShowPoems(false);
+											}}
+										>
+											{slugToTitle(slug)}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+						{!ELEVENLABS_VOICES.some((v) => v.id === elevenLabsVoiceId) && (
+							<input
+								style={{ marginTop: 6 }}
+								value={elevenLabsVoiceId}
+								onChange={(e) => onElevenLabsVoiceIdChange(e.target.value)}
+								placeholder="Paste ElevenLabs voice ID…"
+								spellCheck={false}
+								autoComplete="off"
+							/>
+						)}
 					</div>
 				</div>
 			) : (

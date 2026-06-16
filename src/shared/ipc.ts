@@ -61,6 +61,18 @@ export interface Credentials {
 	elevenLabsKey: string;
 }
 
+export interface PreviewVoiceOpts {
+	text: string;
+	ttsProvider: TtsProvider;
+	// OpenAI
+	voice?: TtsVoice;
+	model?: TtsModel;
+	instructions?: string;
+	// ElevenLabs
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
+}
+
 // Mirrors ProgressEvent in convert.ts (re-declared to avoid cross-package import)
 export type ProgressEvent =
 	| {

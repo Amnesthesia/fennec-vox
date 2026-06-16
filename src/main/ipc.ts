@@ -3,8 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
 	ConversionOptions,
 	Credentials,
-	TtsModel,
-	TtsVoice,
+	PreviewVoiceOpts,
 } from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { Buffer } from "buffer";
@@ -14,6 +13,7 @@ import OpenAI from "openai";
 import { buildM4b, resolveFfmpegBin } from "../lib/audio";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
+import { elevenLabsOutputFormat } from "../lib/elevenlabs";
 import {
 	detectMarkupProvider,
 	detectTtsProvider,
@@ -168,37 +168,65 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 	// ── Voice preview ─────────────────────────────────────────────────────────
 
-	ipcMain.handle(
-		IPC.PREVIEW_VOICE,
-		async (
-			_event,
-			opts: { voice: TtsVoice; model: TtsModel; instructions?: string },
-		) => {
-			const { openaiKey } = await getCredentials();
-			if (!openaiKey) return { error: "No OpenAI key configured." };
+	ipcMain.handle(IPC.PREVIEW_VOICE, async (_event, opts: PreviewVoiceOpts) => {
+		if (opts.ttsProvider === "elevenlabs") {
+			const { elevenLabsKey } = await getCredentials();
+			if (!elevenLabsKey) return { error: "No ElevenLabs key configured." };
+			if (!opts.elevenLabsVoiceId)
+				return { error: "No ElevenLabs voice selected." };
 			try {
-				const body: Record<string, unknown> = {
-					model: opts.model,
-					input: `Hey there, I'm ${opts.voice}. I'll be your narrator for this audiobook.`,
-					voice: opts.voice,
-				};
-				if (opts.instructions) body.instructions = opts.instructions;
-				const res = await fetch("https://api.openai.com/v1/audio/speech", {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${openaiKey}`,
-						"Content-Type": "application/json",
+				const outputFormat = elevenLabsOutputFormat("mp3");
+				const res = await fetch(
+					`https://api.elevenlabs.io/v1/text-to-speech/${opts.elevenLabsVoiceId}?output_format=${outputFormat}`,
+					{
+						method: "POST",
+						headers: {
+							"xi-api-key": elevenLabsKey,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							text: opts.text,
+							model_id: opts.elevenLabsModel ?? "eleven_v3",
+						}),
 					},
-					body: JSON.stringify(body),
-				});
-				if (!res.ok) return { error: `TTS preview failed: ${res.statusText}` };
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `ElevenLabs preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
 				const buf = await res.arrayBuffer();
 				return { audio: Buffer.from(buf).toString("base64") };
 			} catch (e: unknown) {
 				return { error: String(e) };
 			}
-		},
-	);
+		}
+
+		const { openaiKey } = await getCredentials();
+		if (!openaiKey) return { error: "No OpenAI key configured." };
+		try {
+			const body: Record<string, unknown> = {
+				model: opts.model,
+				input: opts.text,
+				voice: opts.voice,
+			};
+			if (opts.instructions) body.instructions = opts.instructions;
+			const res = await fetch("https://api.openai.com/v1/audio/speech", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${openaiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(body),
+			});
+			if (!res.ok) return { error: `TTS preview failed: ${res.statusText}` };
+			const buf = await res.arrayBuffer();
+			return { audio: Buffer.from(buf).toString("base64") };
+		} catch (e: unknown) {
+			return { error: String(e) };
+		}
+	});
 
 	// ── Conversion ────────────────────────────────────────────────────────────
 

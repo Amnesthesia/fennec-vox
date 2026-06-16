@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ConversionOptions, TtsModel, TtsVoice } from "@shared/ipc";
+import type { ConversionOptions, PreviewVoiceOpts } from "@shared/ipc";
 import OpenAI from "openai";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
 import { getCredentials, saveCredentials } from "../lib/credentials/browser";
+import { elevenLabsOutputFormat } from "../lib/elevenlabs";
 import { extractChapters as extractEpubBrowser } from "../lib/epub/browser";
 import {
 	detectMarkupProvider,
@@ -130,17 +131,52 @@ export const browserApi = {
 		return Promise.resolve();
 	},
 
-	async previewVoice(opts: {
-		voice: TtsVoice;
-		model: TtsModel;
-		instructions?: string;
-	}): Promise<{ audio?: string; error?: string }> {
+	async previewVoice(
+		opts: PreviewVoiceOpts,
+	): Promise<{ audio?: string; error?: string }> {
+		if (opts.ttsProvider === "elevenlabs") {
+			const { elevenLabsKey } = await getCredentials();
+			if (!elevenLabsKey) return { error: "No ElevenLabs key configured." };
+			if (!opts.elevenLabsVoiceId)
+				return { error: "No ElevenLabs voice selected." };
+			try {
+				const outputFormat = elevenLabsOutputFormat("mp3");
+				const res = await fetch(
+					`https://api.elevenlabs.io/v1/text-to-speech/${opts.elevenLabsVoiceId}?output_format=${outputFormat}`,
+					{
+						method: "POST",
+						headers: {
+							"xi-api-key": elevenLabsKey,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							text: opts.text,
+							model_id: opts.elevenLabsModel ?? "eleven_v3",
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `ElevenLabs preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const arrayBuffer = await res.arrayBuffer();
+				const base64 = btoa(
+					String.fromCharCode(...new Uint8Array(arrayBuffer)),
+				);
+				return { audio: base64 };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
 		const { openaiKey } = await getCredentials();
 		if (!openaiKey) return { error: "No OpenAI key configured." };
 		try {
 			const body: Record<string, unknown> = {
 				model: opts.model,
-				input: `Hey there, I'm ${opts.voice}. I'll be your narrator for this audiobook.`,
+				input: opts.text,
 				voice: opts.voice,
 			};
 			if (opts.instructions) body.instructions = opts.instructions;
