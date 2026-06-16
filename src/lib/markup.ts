@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { pLimit } from "./pLimit";
 import { sleep, splitIntoChunks } from "./text";
 import type {
+	BookMetadata,
 	Chapter,
 	ChapterRecord,
 	CostEstimate,
@@ -177,6 +178,86 @@ export function detectTtsProvider(
 	elevenLabsKey: string | undefined,
 ): TtsProvider {
 	return elevenLabsKey ? "elevenlabs" : "openai";
+}
+
+// ── Narration-style suggestion ────────────────────────────────────────────────
+// Only OpenAI's gpt-4o-mini-tts model accepts free-form narration "instructions" —
+// ElevenLabs and OpenAI's tts-1/tts-1-hd have no equivalent, so callers should
+// only invoke this when that model is active.
+
+export interface NarrationStyleSuggestion {
+	instructions: string;
+	recognized: boolean;
+}
+
+const SUGGESTION_SYSTEM_PROMPT = `You are an expert audiobook director. You will be given a book's title, author, and a short excerpt from its text (which may be the opening pages, or a summary/synopsis chapter).
+
+Decide whether you recognize this specific book from its title and author using your own knowledge. If you do, lean on what you know about its genre, tone, and register. If you do not confidently recognize it, base your judgement only on the excerpt provided.
+
+Then write a single paragraph of narration-style instructions for a text-to-speech narrator voice, in the imperative, similar in spirit to: "You are a literary audiobook narrator. Speak with a mellow, warm baritone — measured and unhurried, never flat." Tailor the pacing, tone, and register to this specific book's genre and mood (for example: brisk and tense for a thriller, playful and light for comedic fiction, warm and simple for a children's book, measured and authoritative for nonfiction).
+
+Respond in EXACTLY this format, with no other text before or after:
+RECOGNIZED: yes|no
+INSTRUCTIONS: <the single-paragraph narration style instructions>`;
+
+function buildSuggestionUserMessage(
+	metadata: BookMetadata,
+	excerpt: string,
+): string {
+	return `Title: ${metadata.title}\nAuthor: ${metadata.author}\n\nExcerpt:\n${excerpt}`;
+}
+
+function parseSuggestionResponse(raw: string): NarrationStyleSuggestion {
+	const recognizedMatch = raw.match(/RECOGNIZED:\s*(yes|no)/i);
+	const instructionsMatch = raw.match(/INSTRUCTIONS:\s*([\s\S]*)/i);
+	return {
+		instructions: (instructionsMatch?.[1] ?? raw).trim(),
+		recognized: (recognizedMatch?.[1] ?? "no").toLowerCase() === "yes",
+	};
+}
+
+export async function suggestNarrationStyle(
+	provider: MarkupProvider,
+	anthropic: Anthropic | null,
+	openai: OpenAI,
+	metadata: BookMetadata,
+	excerpt: string,
+): Promise<NarrationStyleSuggestion> {
+	if (provider === "claude-haiku" && !anthropic) {
+		throw new Error("Anthropic client required for claude-haiku provider");
+	}
+	const userMessage = buildSuggestionUserMessage(metadata, excerpt);
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		try {
+			if (provider === "claude-haiku" && anthropic) {
+				const response = await anthropic.messages.create({
+					model: "claude-haiku-4-5-20251001",
+					max_tokens: 400,
+					system: SUGGESTION_SYSTEM_PROMPT,
+					messages: [{ role: "user", content: userMessage }],
+				});
+				const block = response.content[0];
+				if (block?.type !== "text")
+					throw new Error("Unexpected response type from Claude");
+				return parseSuggestionResponse(block.text);
+			}
+			const response = await openai.chat.completions.create({
+				model: "gpt-4o-mini",
+				messages: [
+					{ role: "system", content: SUGGESTION_SYSTEM_PROMPT },
+					{ role: "user", content: userMessage },
+				],
+			});
+			const content = response.choices[0]?.message?.content;
+			if (!content) throw new Error("Empty response from GPT-4o mini");
+			return parseSuggestionResponse(content);
+		} catch (e) {
+			lastError = e;
+			if (attempt < 3) await sleep(1000 * attempt);
+		}
+	}
+	throw lastError;
 }
 
 const PRICING = {

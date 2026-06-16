@@ -518,6 +518,18 @@ html, body, #root {
   margin-top: 20px;
 }
 
+.narration-suggestion-box {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--accent-subtle);
+  border-radius: var(--radius);
+  padding: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
 /* ── Misc ───────────────────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;

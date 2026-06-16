@@ -4,6 +4,7 @@ import type {
 	ConversionOptions,
 	Credentials,
 	PreviewVoiceOpts,
+	SuggestNarrationStyleOpts,
 } from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { Buffer } from "buffer";
@@ -18,9 +19,10 @@ import {
 	detectMarkupProvider,
 	detectTtsProvider,
 	estimateCosts,
+	suggestNarrationStyle,
 } from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
-import { padded, safeFilename } from "../lib/text";
+import { findExcerpt, padded, safeFilename } from "../lib/text";
 import type { Chapter, ChapterRecord, Progress, TtsFormat } from "../lib/types";
 import { innerTtsFormat } from "../lib/types";
 import { getCredentials, saveCredentials } from "./keychain";
@@ -227,6 +229,47 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			return { error: String(e) };
 		}
 	});
+
+	// ── Narration style suggestion ───────────────────────────────────────────
+
+	ipcMain.handle(
+		IPC.SUGGEST_NARRATION_STYLE,
+		async (_event, opts: SuggestNarrationStyleOpts) => {
+			const { anthropicKey, openaiKey } = await getCredentials();
+			if (!openaiKey) return { error: "OpenAI API key is required." };
+
+			let provider: ReturnType<typeof detectMarkupProvider>;
+			try {
+				provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+			} catch (e) {
+				return { error: (e as Error).message };
+			}
+
+			try {
+				const { chapters, metadata } = await extractContent(opts.epubPath);
+				const { excerpt } = findExcerpt(chapters);
+				const anthropic = anthropicKey
+					? new Anthropic({ apiKey: anthropicKey })
+					: null;
+				const openai = new OpenAI({ apiKey: openaiKey });
+				const { instructions, recognized } = await suggestNarrationStyle(
+					provider,
+					anthropic,
+					openai,
+					metadata,
+					excerpt,
+				);
+				return {
+					instructions,
+					recognized,
+					bookTitle: metadata.title,
+					bookAuthor: metadata.author,
+				};
+			} catch (e) {
+				return { error: (e as Error).message };
+			}
+		},
+	);
 
 	// ── Conversion ────────────────────────────────────────────────────────────
 

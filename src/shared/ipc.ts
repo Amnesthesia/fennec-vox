@@ -9,6 +9,7 @@ export const IPC = {
 	START_CONVERSION: "start-conversion",
 	STOP_CONVERSION: "stop-conversion",
 	PREVIEW_VOICE: "preview-voice",
+	SUGGEST_NARRATION_STYLE: "suggest-narration-style",
 	OPEN_EXTERNAL: "open-external",
 
 	// main → renderer (send)
@@ -71,6 +72,20 @@ export interface PreviewVoiceOpts {
 	// ElevenLabs
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
+}
+
+// Only meaningful for OpenAI's gpt-4o-mini-tts model, which is the only TTS
+// model/provider combination that accepts free-form narration instructions.
+export interface SuggestNarrationStyleOpts {
+	epubPath: string;
+}
+
+export interface SuggestNarrationStyleResult {
+	instructions?: string;
+	recognized?: boolean;
+	bookTitle?: string;
+	bookAuthor?: string;
+	error?: string;
 }
 
 // Mirrors ProgressEvent in convert.ts (re-declared to avoid cross-package import)

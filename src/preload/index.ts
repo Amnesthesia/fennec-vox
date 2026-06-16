@@ -3,6 +3,8 @@ import type {
 	Credentials,
 	PreviewVoiceOpts,
 	ProgressEvent,
+	SuggestNarrationStyleOpts,
+	SuggestNarrationStyleResult,
 } from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { contextBridge, ipcRenderer } from "electron";
@@ -28,6 +30,12 @@ const api = {
 		opts: PreviewVoiceOpts,
 	): Promise<{ audio?: string; error?: string }> =>
 		ipcRenderer.invoke(IPC.PREVIEW_VOICE, opts),
+
+	// Narration style suggestion
+	suggestNarrationStyle: (
+		opts: SuggestNarrationStyleOpts,
+	): Promise<SuggestNarrationStyleResult> =>
+		ipcRenderer.invoke(IPC.SUGGEST_NARRATION_STYLE, opts),
 
 	// Conversion
 	startConversion: (

@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ConversionOptions, PreviewVoiceOpts } from "@shared/ipc";
+import type {
+	ConversionOptions,
+	PreviewVoiceOpts,
+	SuggestNarrationStyleOpts,
+	SuggestNarrationStyleResult,
+} from "@shared/ipc";
 import OpenAI from "openai";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
@@ -10,8 +15,10 @@ import {
 	detectMarkupProvider,
 	detectTtsProvider,
 	estimateCosts,
+	suggestNarrationStyle,
 } from "../lib/markup";
 import { extractChaptersPdf as extractPdfBrowser } from "../lib/pdf/browser";
+import { findExcerpt } from "../lib/text";
 import type {
 	Chapter,
 	ChapterRecord,
@@ -194,6 +201,61 @@ export const browserApi = {
 			return { audio: base64 };
 		} catch (e: unknown) {
 			return { error: String(e) };
+		}
+	},
+
+	async suggestNarrationStyle(
+		_opts: SuggestNarrationStyleOpts,
+	): Promise<SuggestNarrationStyleResult> {
+		if (!pendingFile) return { error: "No file available." };
+
+		const { anthropicKey, openaiKey } = await getCredentials();
+		if (!openaiKey) return { error: "OpenAI API key is required." };
+
+		let provider: ReturnType<typeof detectMarkupProvider>;
+		try {
+			provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+		} catch (e) {
+			return { error: (e as Error).message };
+		}
+
+		try {
+			const lower = pendingFile.name.toLowerCase();
+			let chapters: Chapter[];
+			let metadata: { title: string; author: string };
+			if (lower.endsWith(".epub")) {
+				({ chapters, metadata } = await extractEpubBrowser(pendingFile));
+			} else if (lower.endsWith(".pdf")) {
+				({ chapters, metadata } = await extractPdfBrowser(pendingFile));
+			} else {
+				return { error: "Unsupported file type. Use EPUB or PDF." };
+			}
+			const { excerpt } = findExcerpt(chapters);
+			const anthropic = anthropicKey
+				? new Anthropic({
+						apiKey: anthropicKey,
+						dangerouslyAllowBrowser: true,
+					})
+				: null;
+			const openai = new OpenAI({
+				apiKey: openaiKey,
+				dangerouslyAllowBrowser: true,
+			});
+			const { instructions, recognized } = await suggestNarrationStyle(
+				provider,
+				anthropic,
+				openai,
+				metadata,
+				excerpt,
+			);
+			return {
+				instructions,
+				recognized,
+				bookTitle: metadata.title,
+				bookAuthor: metadata.author,
+			};
+		} catch (e: unknown) {
+			return { error: (e as Error).message ?? String(e) };
 		}
 	},
 

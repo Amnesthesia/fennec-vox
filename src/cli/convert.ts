@@ -13,9 +13,10 @@ import {
 	detectMarkupProvider,
 	detectTtsProvider,
 	estimateCosts,
+	suggestNarrationStyle,
 } from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
-import { padded, safeFilename, sleep } from "../lib/text";
+import { findExcerpt, padded, safeFilename, sleep } from "../lib/text";
 import type {
 	Chapter,
 	ElevenLabsModel,
@@ -110,6 +111,12 @@ const argv = yargs(hideBin(process.argv))
 		type: "string" as const,
 		default: process.env.TTS_INSTRUCTIONS,
 		description: "Narration style instructions (gpt-4o-mini-tts only)",
+	})
+	.option("suggest-style", {
+		type: "boolean" as const,
+		default: false,
+		description:
+			"Print a suggested narration style for this book and exit (gpt-4o-mini-tts only)",
 	})
 	.option("elevenlabs-voice", {
 		type: "string" as const,
@@ -446,6 +453,33 @@ async function main(): Promise<void> {
 	}
 
 	const { chapters, metadata } = await extractContent(inputPath);
+
+	if (argv["suggest-style"]) {
+		if (ttsProvider !== "openai" || ttsModel !== "gpt-4o-mini-tts") {
+			logError(
+				"--suggest-style only applies to OpenAI's gpt-4o-mini-tts model.",
+			);
+			process.exit(1);
+		}
+		log("Generating narration style suggestion…");
+		const { excerpt } = findExcerpt(chapters);
+		const { instructions, recognized } = await suggestNarrationStyle(
+			provider,
+			anthropic,
+			openai,
+			metadata,
+			excerpt,
+		);
+		console.log(
+			`\nRecognized book: ${recognized ? "yes" : "no (based on excerpt)"}\n`,
+		);
+		console.log(`Suggested narration style instructions:\n\n${instructions}\n`);
+		console.log(
+			'Pass this via --tts-instructions "..." or the TTS_INSTRUCTIONS env var to use it.\n',
+		);
+		process.exit(0);
+	}
+
 	progress.epubFile = inputPath;
 	progress.bookTitle = metadata.title;
 	progress.bookAuthor = metadata.author;

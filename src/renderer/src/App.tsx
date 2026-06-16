@@ -11,8 +11,16 @@ import { DEFAULT_ELEVENLABS_VOICE_ID } from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
 import FilePicker from "./components/FilePicker";
 import LogViewer from "./components/LogViewer";
+import NarrationStyleModal from "./components/NarrationStyleModal";
 import ProgressPanel from "./components/ProgressPanel";
 import SettingsPanel from "./components/SettingsPanel";
+
+export interface NarrationStyleSuggestionState {
+	instructions: string;
+	recognized: boolean;
+	bookTitle: string;
+	bookAuthor: string;
+}
 
 export interface ChapterStatus {
 	index: number;
@@ -72,6 +80,10 @@ export default function App() {
 	const [logs, setLogs] = useState<string[]>([]);
 	const logsRef = useRef<string[]>([]);
 
+	const [narrationSuggestion, setNarrationSuggestion] =
+		useState<NarrationStyleSuggestionState | null>(null);
+	const suggestionGenRef = useRef(0);
+
 	const appendLog = useCallback((line: string) => {
 		logsRef.current = [...logsRef.current, line];
 		setLogs([...logsRef.current]);
@@ -103,6 +115,27 @@ export default function App() {
 		if (p && !outputDir) {
 			const dir = p.replace(/[/\\][^/\\]+$/, "");
 			if (dir) setOutputDir(dir);
+		}
+
+		// Only OpenAI's gpt-4o-mini-tts model accepts narration "instructions" —
+		// ElevenLabs and tts-1/tts-1-hd have no equivalent, so skip the suggestion
+		// entirely rather than computing one that couldn't be used.
+		const gen = ++suggestionGenRef.current;
+		setNarrationSuggestion(null);
+		if (p && ttsProvider === "openai" && ttsModel === "gpt-4o-mini-tts") {
+			void window.api
+				.suggestNarrationStyle({ epubPath: p })
+				.then((result) => {
+					if (gen !== suggestionGenRef.current) return;
+					if (result.error || !result.instructions) return;
+					setNarrationSuggestion({
+						instructions: result.instructions,
+						recognized: !!result.recognized,
+						bookTitle: result.bookTitle ?? "",
+						bookAuthor: result.bookAuthor ?? "",
+					});
+				})
+				.catch(() => {});
 		}
 	};
 
@@ -412,6 +445,17 @@ export default function App() {
 							.getCredentials()
 							.then((creds) => setHasOpenAiKey(!!creds.openaiKey));
 					}}
+				/>
+			)}
+
+			{narrationSuggestion && (
+				<NarrationStyleModal
+					suggestion={narrationSuggestion}
+					onAccept={() => {
+						setTtsInstructions(narrationSuggestion.instructions);
+						setNarrationSuggestion(null);
+					}}
+					onDecline={() => setNarrationSuggestion(null)}
 				/>
 			)}
 		</div>
