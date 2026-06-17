@@ -128,6 +128,7 @@ export const browserApi = {
 		anthropicKey: string;
 		openaiKey: string;
 		elevenLabsKey: string;
+		googleKey: string;
 	}): Promise<void> {
 		return saveCredentials(c);
 	},
@@ -172,6 +173,38 @@ export const browserApi = {
 					String.fromCharCode(...new Uint8Array(arrayBuffer)),
 				);
 				return { audio: base64 };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
+		if (opts.ttsProvider === "google") {
+			const { googleKey } = await getCredentials();
+			if (!googleKey) return { error: "No Google API key configured." };
+			if (!opts.googleVoiceName) return { error: "No Google voice selected." };
+			try {
+				const voiceName = opts.googleVoiceName;
+				const langCode = voiceName.split("-").slice(0, 2).join("-") || "en-US";
+				const res = await fetch(
+					`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							input: { text: opts.text },
+							voice: { languageCode: langCode, name: voiceName },
+							audioConfig: { audioEncoding: "MP3" },
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `Google TTS preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const json = (await res.json()) as { audioContent: string };
+				return { audio: json.audioContent };
 			} catch (e: unknown) {
 				return { error: String(e) };
 			}
@@ -265,7 +298,8 @@ export const browserApi = {
 
 		stopRequested = false;
 
-		const { anthropicKey, openaiKey, elevenLabsKey } = await getCredentials();
+		const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
+			await getCredentials();
 		if (!openaiKey)
 			return { error: "OpenAI API key is required. Configure it in Settings." };
 
@@ -352,6 +386,8 @@ export const browserApi = {
 					elevenLabsApiKey: elevenLabsKey || undefined,
 					elevenLabsVoiceId: opts.elevenLabsVoiceId,
 					elevenLabsModel: opts.elevenLabsModel,
+					googleApiKey: googleKey || undefined,
+					googleVoiceName: opts.googleVoiceName,
 					chunkSize: opts.chunkSize,
 					concurrency: opts.concurrency,
 					ttsInstructions: opts.ttsInstructions,

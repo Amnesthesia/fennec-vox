@@ -28,6 +28,7 @@ import type {
 } from "../lib/types";
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GOOGLE_VOICE_NAME,
 	innerTtsFormat,
 	ttsFormat,
 } from "../lib/types";
@@ -134,6 +135,12 @@ const argv = yargs(hideBin(process.argv))
 		] as const,
 		description:
 			"ElevenLabs TTS model (only used when ELEVENLABS_API_KEY is set)",
+	})
+	.option("google-voice", {
+		type: "string" as const,
+		default: process.env.GOOGLE_VOICE ?? DEFAULT_GOOGLE_VOICE_NAME,
+		description:
+			"Google Cloud TTS voice name (only used when GOOGLE_API_KEY is set)",
 	})
 	.option("chunk-size", {
 		alias: "c",
@@ -389,6 +396,7 @@ async function main(): Promise<void> {
 	const anthropicKey = process.env.ANTHROPIC_API_KEY;
 	const openaiKey = process.env.OPENAI_API_KEY;
 	const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+	const googleApiKey = process.env.GOOGLE_API_KEY;
 
 	let provider: MarkupProvider;
 	try {
@@ -397,7 +405,11 @@ async function main(): Promise<void> {
 		logError((e as Error).message);
 		process.exit(1);
 	}
-	const ttsProvider = detectTtsProvider(elevenLabsKey);
+	// Google takes priority over ElevenLabs only when explicitly set via env;
+	// use detectTtsProvider for the OpenAI/ElevenLabs default.
+	const ttsProvider = googleApiKey
+		? "google"
+		: detectTtsProvider(elevenLabsKey);
 
 	log(`Markup provider: ${provider}  |  TTS provider: ${ttsProvider}`);
 
@@ -423,6 +435,7 @@ async function main(): Promise<void> {
 	const ttsInstructions = argv["tts-instructions"] as string | undefined;
 	const elevenLabsVoiceId = argv["elevenlabs-voice"];
 	const elevenLabsModel = argv["elevenlabs-model"] as ElevenLabsModel;
+	const googleVoiceName = argv["google-voice"];
 
 	const anthropic = anthropicKey
 		? new Anthropic({ apiKey: anthropicKey })
@@ -497,7 +510,9 @@ async function main(): Promise<void> {
 	const ttsLabel =
 		ttsProvider === "elevenlabs"
 			? `ElevenLabs TTS (${elevenLabsModel})`
-			: `OpenAI TTS (${ttsModel})`;
+			: ttsProvider === "google"
+				? `Google Cloud TTS (${googleVoiceName})`
+				: `OpenAI TTS (${ttsModel})`;
 	displayCostEstimate(estimate, ttsLabel, concurrency);
 	const completedIndices = Object.keys(progress.completedChapters).map(Number);
 	emitProgress({
@@ -569,6 +584,8 @@ async function main(): Promise<void> {
 		elevenLabsApiKey: elevenLabsKey,
 		elevenLabsVoiceId,
 		elevenLabsModel,
+		googleApiKey,
+		googleVoiceName,
 		chunkSize,
 		concurrency,
 		ttsInstructions,

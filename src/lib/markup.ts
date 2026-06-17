@@ -24,6 +24,7 @@ export function narratorStyleFor(
 	ttsProvider: TtsProvider,
 	elevenLabsModel?: ElevenLabsModel,
 ): NarratorStyle {
+	if (ttsProvider === "google") return "ssml-breaks";
 	if (ttsProvider !== "elevenlabs") return "plain";
 	return elevenLabsModel === "eleven_v3" ? "audio-tags" : "ssml-breaks";
 }
@@ -269,6 +270,8 @@ const PRICING = {
 	tts1HdPerMChars: 30.0,
 	// Approximate blended rate across ElevenLabs plans (~$0.15-0.22 / 1k chars).
 	elevenLabsPerMChars: 180.0,
+	// Google Neural2/Journey voices: $16 per 1M characters.
+	googlePerMChars: 16.0,
 } as const;
 
 const CHARS_PER_TOKEN = 4;
@@ -313,9 +316,11 @@ export function estimateCosts(
 	const ttsRate =
 		ttsProvider === "elevenlabs"
 			? PRICING.elevenLabsPerMChars
-			: ttsModel === "tts-1-hd"
-				? PRICING.tts1HdPerMChars
-				: PRICING.tts1PerMChars;
+			: ttsProvider === "google"
+				? PRICING.googlePerMChars
+				: ttsModel === "tts-1-hd"
+					? PRICING.tts1HdPerMChars
+					: PRICING.tts1PerMChars;
 	const ttsCost = (totalTtsChars / 1_000_000) * ttsRate;
 	return {
 		pendingChapters,

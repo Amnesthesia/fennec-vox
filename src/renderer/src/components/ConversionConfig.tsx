@@ -6,7 +6,7 @@ import type {
 	TtsVoice,
 } from "@shared/ipc";
 import { useEffect, useRef, useState } from "react";
-import { ELEVENLABS_VOICES } from "../../../lib/types";
+import { ELEVENLABS_VOICES, GOOGLE_VOICES } from "../../../lib/types";
 
 const ALL_VOICES: TtsVoice[] = [
 	"alloy",
@@ -51,6 +51,9 @@ interface Props {
 	onElevenLabsVoiceIdChange: (v: string) => void;
 	elevenLabsModel: ElevenLabsModel;
 	onElevenLabsModelChange: (v: ElevenLabsModel) => void;
+	hasGoogleKey: boolean;
+	googleVoiceName: string;
+	onGoogleVoiceNameChange: (v: string) => void;
 }
 
 function slugToTitle(slug: string): string {
@@ -77,6 +80,9 @@ export default function ConversionConfig({
 	onElevenLabsVoiceIdChange,
 	elevenLabsModel,
 	onElevenLabsModelChange,
+	hasGoogleKey,
+	googleVoiceName,
+	onGoogleVoiceNameChange,
 }: Props) {
 	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [previewing, setPreviewing] = useState(false);
@@ -87,15 +93,16 @@ export default function ConversionConfig({
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const popoverRef = useRef<HTMLDivElement | null>(null);
 	const elPreviewCache = useRef<Map<string, string>>(new Map());
+	const googlePreviewCache = useRef<Map<string, string>>(new Map());
 
-	// Update poem list when voice changes
+	// Update poem list when OpenAI voice changes
 	useEffect(() => {
 		getManifest()
 			.then((m) => setPoems(m[voice] ?? []))
 			.catch(() => {});
 	}, [voice]);
 
-	// Load poem texts once — used to synthesise live ElevenLabs previews
+	// Load poem texts once — used to synthesise live previews for alternative providers
 	useEffect(() => {
 		fetch("./previews/poems.json")
 			.then((res) => res.json())
@@ -118,7 +125,7 @@ export default function ConversionConfig({
 		return () => document.removeEventListener("mousedown", handler);
 	}, [showPoems]);
 
-	const playSlug = (v: TtsVoice, slug: string) => {
+	const playSlug = (v: string, slug: string) => {
 		if (audioRef.current) {
 			audioRef.current.pause();
 			audioRef.current = null;
@@ -136,14 +143,23 @@ export default function ConversionConfig({
 		const manifest = await getManifest().catch(() => null);
 		const slugs = manifest?.[v] ?? [];
 		if (slugs.length === 0) return;
-		playSlug(v, slugs[Math.floor(Math.random() * slugs.length)]!);
+		const pick = slugs[Math.floor(Math.random() * slugs.length)];
+		if (pick) playSlug(v, pick);
 	};
 
-	// ElevenLabs voices have no pre-rendered previews, so synthesise the poem
-	// live via the ElevenLabs API (cached per voice/model/poem for this session).
+	// ElevenLabs voices: use static pre-rendered file when available, otherwise
+	// synthesise live via the API (cached per voice/model/poem for this session).
 	const playElevenLabsPoem = async (voiceId: string, slug: string) => {
+		if (!voiceId) return;
+
+		const manifest = await getManifest().catch(() => null);
+		if (manifest?.[voiceId]?.includes(slug)) {
+			playSlug(voiceId, slug);
+			return;
+		}
+
 		const text = poemTexts[slug];
-		if (!text || !voiceId) return;
+		if (!text) return;
 		if (audioRef.current) {
 			audioRef.current.pause();
 			audioRef.current = null;
@@ -181,19 +197,90 @@ export default function ConversionConfig({
 		}
 	};
 
-	const handleElevenLabsVoiceChange = (id: string) => {
+	const handleElevenLabsVoiceChange = async (id: string) => {
 		onElevenLabsVoiceIdChange(id);
+		const manifest = await getManifest().catch(() => null);
+		const staticSlugs = manifest?.[id] ?? [];
+		if (staticSlugs.length > 0) {
+			const pick = staticSlugs[Math.floor(Math.random() * staticSlugs.length)];
+			if (pick) playSlug(id, pick);
+			return;
+		}
 		const slugs = Object.keys(poemTexts);
 		if (slugs.length === 0) return;
-		void playElevenLabsPoem(
-			id,
-			slugs[Math.floor(Math.random() * slugs.length)]!,
-		);
+		const pick = slugs[Math.floor(Math.random() * slugs.length)];
+		if (pick) void playElevenLabsPoem(id, pick);
 	};
+
+	// Google voices: use static pre-rendered file when available, otherwise
+	// synthesise live (cached per voice name/poem for this session).
+	const playGooglePoem = async (vName: string, slug: string) => {
+		if (!vName) return;
+
+		const manifest = await getManifest().catch(() => null);
+		if (manifest?.[vName]?.includes(slug)) {
+			playSlug(vName, slug);
+			return;
+		}
+
+		const text = poemTexts[slug];
+		if (!text) return;
+		if (audioRef.current) {
+			audioRef.current.pause();
+			audioRef.current = null;
+		}
+		const playBase64 = (audio64: string) => {
+			setPreviewing(true);
+			const audio = new Audio(`data:audio/mpeg;base64,${audio64}`);
+			audioRef.current = audio;
+			audio.play().catch(() => {});
+			audio.onended = () => setPreviewing(false);
+			audio.onerror = () => setPreviewing(false);
+		};
+
+		const cacheKey = `${vName}|${slug}`;
+		const cached = googlePreviewCache.current.get(cacheKey);
+		if (cached) {
+			playBase64(cached);
+			return;
+		}
+
+		setSynthesizing(true);
+		try {
+			const result = await window.api.previewVoice({
+				ttsProvider: "google",
+				text,
+				googleVoiceName: vName,
+			});
+			setSynthesizing(false);
+			if (result.error || !result.audio) return;
+			googlePreviewCache.current.set(cacheKey, result.audio);
+			playBase64(result.audio);
+		} catch {
+			setSynthesizing(false);
+		}
+	};
+
+	const handleGoogleVoiceChange = async (vName: string) => {
+		onGoogleVoiceNameChange(vName);
+		const manifest = await getManifest().catch(() => null);
+		const staticSlugs = manifest?.[vName] ?? [];
+		if (staticSlugs.length > 0) {
+			const pick = staticSlugs[Math.floor(Math.random() * staticSlugs.length)];
+			if (pick) playSlug(vName, pick);
+			return;
+		}
+		const slugs = Object.keys(poemTexts);
+		if (slugs.length === 0) return;
+		const pick = slugs[Math.floor(Math.random() * slugs.length)];
+		if (pick) void playGooglePoem(vName, pick);
+	};
+
+	const showProviderToggle = hasElevenLabsKey || hasGoogleKey;
 
 	return (
 		<>
-			{hasElevenLabsKey && (
+			{showProviderToggle && (
 				<div className="section">
 					<div className="section-label">TTS Provider</div>
 					<div className="field">
@@ -205,13 +292,24 @@ export default function ConversionConfig({
 							>
 								OpenAI
 							</button>
-							<button
-								className={`provider-toggle-btn${ttsProvider === "elevenlabs" ? " active" : ""}`}
-								onClick={() => onTtsProviderChange("elevenlabs")}
-								type="button"
-							>
-								ElevenLabs
-							</button>
+							{hasElevenLabsKey && (
+								<button
+									className={`provider-toggle-btn${ttsProvider === "elevenlabs" ? " active" : ""}`}
+									onClick={() => onTtsProviderChange("elevenlabs")}
+									type="button"
+								>
+									ElevenLabs
+								</button>
+							)}
+							{hasGoogleKey && (
+								<button
+									className={`provider-toggle-btn${ttsProvider === "google" ? " active" : ""}`}
+									onClick={() => onTtsProviderChange("google")}
+									type="button"
+								>
+									Google
+								</button>
+							)}
 						</div>
 					</div>
 				</div>
@@ -250,7 +348,7 @@ export default function ConversionConfig({
 										onElevenLabsVoiceIdChange("");
 										return;
 									}
-									handleElevenLabsVoiceChange(val);
+									void handleElevenLabsVoiceChange(val);
 								}}
 							>
 								{ELEVENLABS_VOICES.map((v) => (
@@ -293,6 +391,88 @@ export default function ConversionConfig({
 								value={elevenLabsVoiceId}
 								onChange={(e) => onElevenLabsVoiceIdChange(e.target.value)}
 								placeholder="Paste ElevenLabs voice ID…"
+								spellCheck={false}
+								autoComplete="off"
+							/>
+						)}
+					</div>
+				</div>
+			) : ttsProvider === "google" ? (
+				<div className="section">
+					<div className="section-label">
+						Voice
+						{synthesizing && (
+							<span className="preview-badge">⏳ synthesizing…</span>
+						)}
+						{!synthesizing && previewing && (
+							<span className="preview-badge">▶ playing</span>
+						)}
+					</div>
+					<div className="field">
+						<div
+							style={{
+								display: "flex",
+								gap: 6,
+								alignItems: "center",
+								position: "relative",
+							}}
+						>
+							<select
+								style={{ flex: 1 }}
+								value={
+									GOOGLE_VOICES.some((v) => v.name === googleVoiceName)
+										? googleVoiceName
+										: "__custom__"
+								}
+								onChange={(e) => {
+									const val = e.target.value;
+									if (val === "__custom__") {
+										onGoogleVoiceNameChange("");
+										return;
+									}
+									void handleGoogleVoiceChange(val);
+								}}
+							>
+								{GOOGLE_VOICES.map((v) => (
+									<option key={v.name} value={v.name}>
+										{v.label}
+									</option>
+								))}
+								<option value="__custom__">Custom voice name…</option>
+							</select>
+
+							<button
+								className="btn-icon"
+								title="Preview a specific poem"
+								style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
+								onClick={() => setShowPoems((v) => !v)}
+							>
+								▶
+							</button>
+
+							{showPoems && (
+								<div className="poem-popover" ref={popoverRef}>
+									{Object.keys(poemTexts).map((slug) => (
+										<button
+											key={slug}
+											className="poem-popover-item"
+											onClick={() => {
+												void playGooglePoem(googleVoiceName, slug);
+												setShowPoems(false);
+											}}
+										>
+											{slugToTitle(slug)}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+						{!GOOGLE_VOICES.some((v) => v.name === googleVoiceName) && (
+							<input
+								style={{ marginTop: 6 }}
+								value={googleVoiceName}
+								onChange={(e) => onGoogleVoiceNameChange(e.target.value)}
+								placeholder="e.g. en-US-Journey-F"
 								spellCheck={false}
 								autoComplete="off"
 							/>
@@ -416,7 +596,7 @@ export default function ConversionConfig({
 									</option>
 								</select>
 							</div>
-						) : (
+						) : ttsProvider === "google" ? null : (
 							<div className="field">
 								<label>Text-to-Speech Model</label>
 								<select

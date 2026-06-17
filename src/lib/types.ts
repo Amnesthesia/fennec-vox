@@ -18,9 +18,9 @@ export function ttsFormat(format: TtsFormat): "mp3" | "opus" | "aac" | "flac" {
 }
 export type TtsModel = "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts";
 
-// ── TTS provider (OpenAI vs ElevenLabs) ───────────────────────────────────────
+// ── TTS provider ──────────────────────────────────────────────────────────────
 
-export type TtsProvider = "openai" | "elevenlabs";
+export type TtsProvider = "openai" | "elevenlabs" | "google";
 
 // eleven_v3 is the only model that understands audio tags ([pause], [whispers], …);
 // the others fall back to SSML <break> tags, which they support and v3 does not.
@@ -51,15 +51,35 @@ export function elevenLabsTtsFormat(format: TtsFormat): "mp3" | "opus" {
 	return format === "opus" ? "opus" : "mp3";
 }
 
+// Google TTS only emits MP3/OGG_OPUS directly (same constraint as ElevenLabs).
+export function googleTtsFormat(format: TtsFormat): "mp3" | "opus" {
+	return format === "opus" ? "opus" : "mp3";
+}
+
 // The format actually requested from the active TTS provider's API.
 export function innerTtsFormat(
 	format: TtsFormat,
 	provider: TtsProvider,
 ): "mp3" | "opus" | "aac" | "flac" {
-	return provider === "elevenlabs"
-		? elevenLabsTtsFormat(format)
-		: ttsFormat(format);
+	if (provider === "elevenlabs" || provider === "google") {
+		return format === "opus" ? "opus" : "mp3";
+	}
+	return ttsFormat(format);
 }
+
+export const DEFAULT_GOOGLE_VOICE_NAME = "en-US-Journey-F";
+
+// Curated list of high-quality English voices. Any valid Google voice name
+// can be entered manually in the UI.
+export const GOOGLE_VOICES: { name: string; label: string }[] = [
+	{ name: "en-US-Journey-D", label: "Journey D (male)" },
+	{ name: "en-US-Journey-F", label: "Journey F (female)" },
+	{ name: "en-US-Journey-O", label: "Journey O (female)" },
+	{ name: "en-US-Neural2-A", label: "Neural2 A (female)" },
+	{ name: "en-US-Neural2-D", label: "Neural2 D (male)" },
+	{ name: "en-US-Neural2-F", label: "Neural2 F (female)" },
+	{ name: "en-US-Neural2-J", label: "Neural2 J (male)" },
+];
 
 export interface Chapter {
 	index: number;

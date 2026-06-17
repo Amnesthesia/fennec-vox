@@ -8,7 +8,10 @@ import type {
 	TtsVoice,
 } from "@shared/ipc";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DEFAULT_ELEVENLABS_VOICE_ID } from "../../lib/types";
+import {
+	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GOOGLE_VOICE_NAME,
+} from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
 import FilePicker from "./components/FilePicker";
 import LogViewer from "./components/LogViewer";
@@ -70,12 +73,20 @@ export default function App() {
 	);
 	const [elevenLabsModel, setElevenLabsModel] =
 		useState<ElevenLabsModel>("eleven_v3");
+	const [googleKey, setGoogleKey] = useState("");
+	const [googleVoiceName, setGoogleVoiceName] = useState(
+		DEFAULT_GOOGLE_VOICE_NAME,
+	);
 	const [ttsProvider, setTtsProvider] = useState<TtsProvider>("openai");
 
-	// When the ElevenLabs key is cleared, revert to OpenAI automatically.
+	// When a provider key is cleared, revert to OpenAI if that provider is active.
 	useEffect(() => {
-		if (!elevenLabsKey) setTtsProvider("openai");
-	}, [elevenLabsKey]);
+		if (!elevenLabsKey && ttsProvider === "elevenlabs")
+			setTtsProvider("openai");
+	}, [elevenLabsKey, ttsProvider]);
+	useEffect(() => {
+		if (!googleKey && ttsProvider === "google") setTtsProvider("openai");
+	}, [googleKey, ttsProvider]);
 
 	const [hasOpenAiKey, setHasOpenAiKey] = useState<boolean | null>(null);
 	const [keyInput, setKeyInput] = useState("");
@@ -99,6 +110,7 @@ export default function App() {
 		void window.api.getCredentials().then((creds) => {
 			setHasOpenAiKey(!!creds.openaiKey);
 			setElevenLabsKey(creds.elevenLabsKey);
+			setGoogleKey(creds.googleKey);
 			if (creds.elevenLabsKey) setTtsProvider("elevenlabs");
 		});
 	}, []);
@@ -269,6 +281,7 @@ export default function App() {
 				ttsProvider === "elevenlabs" ? elevenLabsVoiceId : undefined,
 			elevenLabsModel:
 				ttsProvider === "elevenlabs" ? elevenLabsModel : undefined,
+			googleVoiceName: ttsProvider === "google" ? googleVoiceName : undefined,
 		};
 		const result = await window.api.startConversion(opts);
 		console.debug("Conversion start result:", result);
@@ -351,6 +364,7 @@ export default function App() {
 							void window.api.getCredentials().then((creds) => {
 								setHasOpenAiKey(!!creds.openaiKey);
 								setElevenLabsKey(creds.elevenLabsKey);
+								setGoogleKey(creds.googleKey);
 								if (creds.elevenLabsKey && ttsProvider === "openai")
 									setTtsProvider("elevenlabs");
 							});
@@ -409,6 +423,9 @@ export default function App() {
 						onElevenLabsVoiceIdChange={setElevenLabsVoiceId}
 						elevenLabsModel={elevenLabsModel}
 						onElevenLabsModelChange={setElevenLabsModel}
+						hasGoogleKey={!!googleKey}
+						googleVoiceName={googleVoiceName}
+						onGoogleVoiceNameChange={setGoogleVoiceName}
 					/>
 
 					<div
@@ -457,6 +474,7 @@ export default function App() {
 						void window.api.getCredentials().then((creds) => {
 							setHasOpenAiKey(!!creds.openaiKey);
 							setElevenLabsKey(creds.elevenLabsKey);
+							setGoogleKey(creds.googleKey);
 							// If ElevenLabs key was just added, switch to it by default.
 							if (creds.elevenLabsKey && ttsProvider === "openai")
 								setTtsProvider("elevenlabs");

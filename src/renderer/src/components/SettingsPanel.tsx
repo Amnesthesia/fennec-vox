@@ -8,6 +8,7 @@ export default function SettingsPanel({ onClose }: Props) {
 	const [anthropicKey, setAnthropicKey] = useState("");
 	const [openaiKey, setOpenaiKey] = useState("");
 	const [elevenLabsKey, setElevenLabsKey] = useState("");
+	const [googleKey, setGoogleKey] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
 
@@ -16,6 +17,7 @@ export default function SettingsPanel({ onClose }: Props) {
 			setAnthropicKey(creds.anthropicKey);
 			setOpenaiKey(creds.openaiKey);
 			setElevenLabsKey(creds.elevenLabsKey);
+			setGoogleKey(creds.googleKey);
 		});
 	}, []);
 
@@ -25,6 +27,7 @@ export default function SettingsPanel({ onClose }: Props) {
 			anthropicKey,
 			openaiKey,
 			elevenLabsKey,
+			googleKey,
 		});
 		setSaving(false);
 		setSaved(true);
@@ -42,9 +45,14 @@ export default function SettingsPanel({ onClose }: Props) {
 			? "GPT-4o mini (fallback)"
 			: "None — add an OpenAI key to continue";
 
-	const activeTtsProvider = elevenLabsKey
-		? "ElevenLabs (ELEVENLABS_API_KEY set)"
-		: "OpenAI (default)";
+	const activeTtsProvider =
+		elevenLabsKey && googleKey
+			? "ElevenLabs and Google available (select in app)"
+			: elevenLabsKey
+				? "ElevenLabs available (select in app)"
+				: googleKey
+					? "Google available (select in app)"
+					: "OpenAI (default)";
 
 	return (
 		<div
@@ -62,8 +70,8 @@ export default function SettingsPanel({ onClose }: Props) {
 					<p className="modal-sub">
 						API keys are stored locally on your device. Claude Haiku is used for
 						narrator markup when an Anthropic key is present; otherwise GPT-4o
-						mini is used. ElevenLabs is used for text-to-speech synthesis when
-						an ElevenLabs key is present; otherwise OpenAI is used.
+						mini is used. ElevenLabs and Google Cloud TTS are available as
+						alternative TTS providers when their keys are configured.
 					</p>
 
 					{/* OpenAI */}
@@ -219,6 +227,58 @@ export default function SettingsPanel({ onClose }: Props) {
 							}}
 						>
 							Stored: {maskKey(elevenLabsKey)}
+						</div>
+					)}
+
+					{/* Google */}
+					<div className="settings-key-label" style={{ marginTop: 8 }}>
+						<span className="section-label" style={{ marginBottom: 0 }}>
+							Google Cloud TTS (TTS — optional)
+						</span>
+						<button
+							className="settings-get-key-link"
+							type="button"
+							onClick={() =>
+								void window.api.openExternal(
+									"https://console.cloud.google.com/apis/credentials",
+								)
+							}
+						>
+							Get key →
+						</button>
+					</div>
+					<div className="key-row" style={{ marginTop: 6 }}>
+						<div className="field">
+							<input
+								type="password"
+								value={googleKey}
+								placeholder="Google API key…"
+								onChange={(e) => setGoogleKey(e.target.value)}
+								autoComplete="off"
+								spellCheck={false}
+							/>
+						</div>
+						{googleKey && (
+							<button
+								className="btn btn-secondary"
+								style={{ fontSize: 11, padding: "5px 8px" }}
+								onClick={() => setGoogleKey("")}
+								type="button"
+								title="Clear key"
+							>
+								✕
+							</button>
+						)}
+					</div>
+					{googleKey && (
+						<div
+							style={{
+								fontSize: 10,
+								color: "var(--text-secondary)",
+								marginBottom: 12,
+							}}
+						>
+							Stored: {maskKey(googleKey)}
 						</div>
 					)}
 

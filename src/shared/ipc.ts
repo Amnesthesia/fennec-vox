@@ -34,7 +34,7 @@ export type TtsVoice =
 export type TtsFormat = "mp3" | "opus" | "aac" | "flac" | "m4b" | "m4a";
 export type TtsModel = "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts";
 
-export type TtsProvider = "openai" | "elevenlabs";
+export type TtsProvider = "openai" | "elevenlabs" | "google";
 export type ElevenLabsModel =
 	| "eleven_v3"
 	| "eleven_multilingual_v2"
@@ -55,12 +55,15 @@ export interface ConversionOptions {
 	// Used instead of `voice`/`ttsModel` when ttsProvider is "elevenlabs".
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
+	// Used when ttsProvider is "google".
+	googleVoiceName?: string;
 }
 
 export interface Credentials {
 	anthropicKey: string;
 	openaiKey: string;
 	elevenLabsKey: string;
+	googleKey: string;
 }
 
 export interface PreviewVoiceOpts {
@@ -73,6 +76,8 @@ export interface PreviewVoiceOpts {
 	// ElevenLabs
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
+	// Google
+	googleVoiceName?: string;
 }
 
 // Only meaningful for OpenAI's gpt-4o-mini-tts model, which is the only TTS

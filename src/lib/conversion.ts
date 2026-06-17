@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Buffer } from "buffer";
 import type OpenAI from "openai";
 import { synthesiseTextElevenLabs } from "./elevenlabs";
+import { synthesiseTextGoogle } from "./google";
 import { addNarratorMarkup, narratorStyleFor } from "./markup";
 import { pLimit } from "./pLimit";
 import { padded, splitIntoChunks } from "./text";
@@ -18,7 +19,11 @@ import type {
 	TtsProvider,
 	TtsVoice,
 } from "./types";
-import { DEFAULT_ELEVENLABS_VOICE_ID, innerTtsFormat } from "./types";
+import {
+	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GOOGLE_VOICE_NAME,
+	innerTtsFormat,
+} from "./types";
 
 const TTS_MAX_CHARS = 4000;
 
@@ -59,6 +64,9 @@ interface ProcessorOpts {
 	elevenLabsApiKey?: string;
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
+	// Google TTS options (used when ttsProvider is "google").
+	googleApiKey?: string;
+	googleVoiceName?: string;
 	format: TtsFormat;
 	chunkSize: number;
 	concurrency: number;
@@ -82,6 +90,8 @@ export async function processChapter(
 		elevenLabsApiKey,
 		elevenLabsVoiceId,
 		elevenLabsModel,
+		googleApiKey,
+		googleVoiceName,
 		chunkSize,
 		concurrency,
 		total,
@@ -143,18 +153,29 @@ export async function processChapter(
 					io.audioChunkCache,
 					onTtsChunk,
 				)
-			: await synthesiseText(
-					openai,
-					ttsText,
-					voice,
-					innerFmt,
-					ttsModel,
-					concurrency,
-					(i) => io.chunkKey(index, i, innerFmt),
-					io.audioChunkCache,
-					onTtsChunk,
-					ttsInstructions,
-				);
+			: ttsProvider === "google"
+				? await synthesiseTextGoogle(
+						googleApiKey ?? "",
+						ttsText,
+						googleVoiceName || DEFAULT_GOOGLE_VOICE_NAME,
+						format,
+						concurrency,
+						(i) => io.chunkKey(index, i, innerFmt),
+						io.audioChunkCache,
+						onTtsChunk,
+					)
+				: await synthesiseText(
+						openai,
+						ttsText,
+						voice,
+						innerFmt,
+						ttsModel,
+						concurrency,
+						(i) => io.chunkKey(index, i, innerFmt),
+						io.audioChunkCache,
+						onTtsChunk,
+						ttsInstructions,
+					);
 
 	const file = await io.saveChapterAudio(index, audioBuffer, innerFmt);
 	io.onLog(
@@ -185,6 +206,8 @@ export interface RunConversionOpts {
 	elevenLabsApiKey?: string;
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
+	googleApiKey?: string;
+	googleVoiceName?: string;
 	chunkSize: number;
 	concurrency: number;
 	io: ConversionIO;
@@ -225,6 +248,8 @@ export async function runConversion(
 		elevenLabsApiKey: opts.elevenLabsApiKey,
 		elevenLabsVoiceId: opts.elevenLabsVoiceId,
 		elevenLabsModel: opts.elevenLabsModel,
+		googleApiKey: opts.googleApiKey,
+		googleVoiceName: opts.googleVoiceName,
 		chunkSize: opts.chunkSize,
 		concurrency: opts.concurrency,
 		total: chapters.length,
