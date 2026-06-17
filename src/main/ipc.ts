@@ -17,7 +17,6 @@ import { runConversion } from "../lib/conversion";
 import { elevenLabsOutputFormat } from "../lib/elevenlabs";
 import {
 	detectMarkupProvider,
-	detectTtsProvider,
 	estimateCosts,
 	suggestNarrationStyle,
 } from "../lib/markup";
@@ -290,7 +289,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			} catch (e) {
 				return { error: (e as Error).message };
 			}
-			const ttsProvider = detectTtsProvider(elevenLabsKey || undefined);
+			const ttsProvider = opts.ttsProvider;
 
 			const send = (channel: string, payload?: unknown) => {
 				if (!win.isDestroyed()) win.webContents.send(channel, payload);

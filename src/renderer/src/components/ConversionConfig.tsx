@@ -45,6 +45,8 @@ interface Props {
 	ttsInstructions: string;
 	onTtsInstructionsChange: (v: string) => void;
 	ttsProvider: TtsProvider;
+	onTtsProviderChange: (v: TtsProvider) => void;
+	hasElevenLabsKey: boolean;
 	elevenLabsVoiceId: string;
 	onElevenLabsVoiceIdChange: (v: string) => void;
 	elevenLabsModel: ElevenLabsModel;
@@ -69,6 +71,8 @@ export default function ConversionConfig({
 	ttsInstructions,
 	onTtsInstructionsChange,
 	ttsProvider,
+	onTtsProviderChange,
+	hasElevenLabsKey,
 	elevenLabsVoiceId,
 	onElevenLabsVoiceIdChange,
 	elevenLabsModel,
@@ -189,6 +193,30 @@ export default function ConversionConfig({
 
 	return (
 		<>
+			{hasElevenLabsKey && (
+				<div className="section">
+					<div className="section-label">TTS Provider</div>
+					<div className="field">
+						<div className="provider-toggle">
+							<button
+								className={`provider-toggle-btn${ttsProvider === "openai" ? " active" : ""}`}
+								onClick={() => onTtsProviderChange("openai")}
+								type="button"
+							>
+								OpenAI
+							</button>
+							<button
+								className={`provider-toggle-btn${ttsProvider === "elevenlabs" ? " active" : ""}`}
+								onClick={() => onTtsProviderChange("elevenlabs")}
+								type="button"
+							>
+								ElevenLabs
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{ttsProvider === "elevenlabs" ? (
 				<div className="section">
 					<div className="section-label">

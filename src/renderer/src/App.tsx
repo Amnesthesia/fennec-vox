@@ -4,6 +4,7 @@ import type {
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
+	TtsProvider,
 	TtsVoice,
 } from "@shared/ipc";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -69,7 +70,12 @@ export default function App() {
 	);
 	const [elevenLabsModel, setElevenLabsModel] =
 		useState<ElevenLabsModel>("eleven_v3");
-	const ttsProvider = elevenLabsKey ? "elevenlabs" : "openai";
+	const [ttsProvider, setTtsProvider] = useState<TtsProvider>("openai");
+
+	// When the ElevenLabs key is cleared, revert to OpenAI automatically.
+	useEffect(() => {
+		if (!elevenLabsKey) setTtsProvider("openai");
+	}, [elevenLabsKey]);
 
 	const [hasOpenAiKey, setHasOpenAiKey] = useState<boolean | null>(null);
 	const [keyInput, setKeyInput] = useState("");
@@ -93,6 +99,7 @@ export default function App() {
 		void window.api.getCredentials().then((creds) => {
 			setHasOpenAiKey(!!creds.openaiKey);
 			setElevenLabsKey(creds.elevenLabsKey);
+			if (creds.elevenLabsKey) setTtsProvider("elevenlabs");
 		});
 	}, []);
 
@@ -253,6 +260,7 @@ export default function App() {
 			voice,
 			format,
 			ttsModel,
+			ttsProvider,
 			chunkSize,
 			concurrency,
 			ttsInstructions: ttsInstructions || undefined,
@@ -340,9 +348,12 @@ export default function App() {
 					<SettingsPanel
 						onClose={() => {
 							setShowSettings(false);
-							void window.api
-								.getCredentials()
-								.then((creds) => setHasOpenAiKey(!!creds.openaiKey));
+							void window.api.getCredentials().then((creds) => {
+								setHasOpenAiKey(!!creds.openaiKey);
+								setElevenLabsKey(creds.elevenLabsKey);
+								if (creds.elevenLabsKey && ttsProvider === "openai")
+									setTtsProvider("elevenlabs");
+							});
 						}}
 					/>
 				)}
@@ -392,6 +403,8 @@ export default function App() {
 						ttsInstructions={ttsInstructions}
 						onTtsInstructionsChange={setTtsInstructions}
 						ttsProvider={ttsProvider}
+						onTtsProviderChange={setTtsProvider}
+						hasElevenLabsKey={!!elevenLabsKey}
 						elevenLabsVoiceId={elevenLabsVoiceId}
 						onElevenLabsVoiceIdChange={setElevenLabsVoiceId}
 						elevenLabsModel={elevenLabsModel}
@@ -441,9 +454,13 @@ export default function App() {
 				<SettingsPanel
 					onClose={() => {
 						setShowSettings(false);
-						void window.api
-							.getCredentials()
-							.then((creds) => setHasOpenAiKey(!!creds.openaiKey));
+						void window.api.getCredentials().then((creds) => {
+							setHasOpenAiKey(!!creds.openaiKey);
+							setElevenLabsKey(creds.elevenLabsKey);
+							// If ElevenLabs key was just added, switch to it by default.
+							if (creds.elevenLabsKey && ttsProvider === "openai")
+								setTtsProvider("elevenlabs");
+						});
 					}}
 				/>
 			)}

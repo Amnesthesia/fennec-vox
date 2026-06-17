@@ -46,12 +46,13 @@ export interface ConversionOptions {
 	voice: TtsVoice;
 	format: TtsFormat;
 	ttsModel: TtsModel;
+	ttsProvider: TtsProvider;
 	chunkSize: number;
 	concurrency: number;
 	resumeFrom?: number;
 	ttsInstructions?: string;
 	redoTts?: boolean;
-	// Used instead of `voice`/`ttsModel` when an ElevenLabs key is configured.
+	// Used instead of `voice`/`ttsModel` when ttsProvider is "elevenlabs".
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
 }

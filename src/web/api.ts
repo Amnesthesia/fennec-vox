@@ -13,7 +13,6 @@ import { elevenLabsOutputFormat } from "../lib/elevenlabs";
 import { extractChapters as extractEpubBrowser } from "../lib/epub/browser";
 import {
 	detectMarkupProvider,
-	detectTtsProvider,
 	estimateCosts,
 	suggestNarrationStyle,
 } from "../lib/markup";
@@ -276,7 +275,7 @@ export const browserApi = {
 		} catch (e) {
 			return { error: (e as Error).message };
 		}
-		const ttsProvider = detectTtsProvider(elevenLabsKey || undefined);
+		const ttsProvider = opts.ttsProvider;
 
 		// Run async — return immediately so the UI can subscribe to events first
 		void (async () => {
