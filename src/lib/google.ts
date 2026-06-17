@@ -5,55 +5,9 @@ import type { ChunkCache } from "./tts";
 import type { TtsFormat } from "./types";
 
 const GOOGLE_API_BASE = "https://texttospeech.googleapis.com/v1";
-// Conservative limit under the 5000-byte request ceiling.
-const GOOGLE_MAX_CHARS = 4500;
-// Google's internal sentence parser rejects sentences longer than ~1000 chars.
-const GOOGLE_MAX_SENTENCE_CHARS = 800;
-
-// Breaks text at soft punctuation boundaries so no sentence exceeds
-// GOOGLE_MAX_SENTENCE_CHARS. <break> tags are treated as sentence boundaries
-// and preserved verbatim. Segments are joined with \n\n so splitIntoChunks
-// keeps them separate rather than re-merging them.
-function breakLongSentences(text: string): string {
-	const BREAK_TAG_RE = /<break\s+time="[\d.]+s"\s*\/>/g;
-	const normalized = text.replace(BREAK_TAG_RE, (tag) => `${tag}\n\n`);
-
-	const rawSegments = normalized.split(/(?<=[.!?])\s+/);
-	const out: string[] = [];
-
-	for (const seg of rawSegments) {
-		if (seg.length <= GOOGLE_MAX_SENTENCE_CHARS) {
-			out.push(seg);
-			continue;
-		}
-		const subsegs = seg.split(/(?<=[,;:—])\s+/);
-		let acc = "";
-		for (const sub of subsegs) {
-			if (sub.length > GOOGLE_MAX_SENTENCE_CHARS) {
-				if (acc) {
-					out.push(acc);
-					acc = "";
-				}
-				let rem = sub;
-				while (rem.length > GOOGLE_MAX_SENTENCE_CHARS) {
-					const cut = rem.lastIndexOf(" ", GOOGLE_MAX_SENTENCE_CHARS);
-					const b = cut > 0 ? cut : GOOGLE_MAX_SENTENCE_CHARS;
-					out.push(rem.slice(0, b).trim());
-					rem = rem.slice(b).trim();
-				}
-				acc = rem;
-			} else if (acc.length + 1 + sub.length > GOOGLE_MAX_SENTENCE_CHARS) {
-				if (acc) out.push(acc);
-				acc = sub;
-			} else {
-				acc = acc ? `${acc} ${sub}` : sub;
-			}
-		}
-		if (acc) out.push(acc);
-	}
-
-	return out.join("\n\n");
-}
+// Google enforces a 5000-byte request limit and rejects individual sentences
+// longer than ~500 chars. 3000 chars keeps requests well under the ceiling.
+const GOOGLE_MAX_CHARS = 3000;
 
 function escapeXml(str: string): string {
 	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -92,7 +46,7 @@ export async function synthesiseTextGoogle(
 	cache: ChunkCache | null,
 	onChunk?: (i: number, total: number, cached: boolean) => void,
 ): Promise<Buffer> {
-	const chunks = splitIntoChunks(breakLongSentences(text), GOOGLE_MAX_CHARS);
+	const chunks = splitIntoChunks(text, GOOGLE_MAX_CHARS);
 	const audioEncoding = format === "opus" ? "OGG_OPUS" : "MP3";
 	const languageCode = languageCodeFromVoice(voiceName);
 
