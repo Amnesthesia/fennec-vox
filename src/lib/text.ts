@@ -1,4 +1,5 @@
 import { load as cheerioLoad } from "cheerio";
+import type { Chapter } from "./types";
 
 export function htmlToPlainText(html: string): string {
 	const $ = cheerioLoad(html);
@@ -82,4 +83,44 @@ export function safeFilename(str: string): string {
 }
 export function padded(n: number): string {
 	return String(n).padStart(4, "0");
+}
+
+// ── Excerpt selection for narration-style suggestions ─────────────────────────
+
+const SUMMARY_TITLE_RE = /^\s*(summary|synopsis|overview|preface|foreword)\b/i;
+const MAX_EXCERPT_CHARS = 3000;
+const MIN_FIRST_CHAPTER_CHARS = 200;
+
+export interface BookExcerpt {
+	excerpt: string;
+	source: "summary-chapter" | "first-chapter";
+}
+
+// Picks the text most likely to reveal a book's genre and tone: a chapter
+// that explicitly summarises the book (if one exists near the start), or
+// else its opening chapter — skipping a suspiciously short first "chapter"
+// (title/copyright page) in favour of the next one.
+export function findExcerpt(chapters: Chapter[]): BookExcerpt {
+	const searchLimit = Math.min(chapters.length, 5);
+	for (let i = 0; i < searchLimit; i++) {
+		const chapter = chapters[i];
+		if (chapter && SUMMARY_TITLE_RE.test(chapter.title)) {
+			return {
+				excerpt: chapter.text.slice(0, MAX_EXCERPT_CHARS),
+				source: "summary-chapter",
+			};
+		}
+	}
+
+	let idx = 0;
+	if (
+		chapters.length > 1 &&
+		(chapters[0]?.text.trim().length ?? 0) < MIN_FIRST_CHAPTER_CHARS
+	) {
+		idx = 1;
+	}
+	return {
+		excerpt: (chapters[idx]?.text ?? "").slice(0, MAX_EXCERPT_CHARS),
+		source: "first-chapter",
+	};
 }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+	findExcerpt,
 	htmlToPlainText,
 	padded,
 	safeFilename,
 	sleep,
 	splitIntoChunks,
 } from "../text";
+import type { Chapter } from "../types";
 
 describe("htmlToPlainText", () => {
 	it("strips tags and normalises whitespace", () => {
@@ -120,5 +122,80 @@ describe("sleep", () => {
 		const start = Date.now();
 		await sleep(50);
 		expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+	});
+});
+
+describe("findExcerpt", () => {
+	const makeChapter = (
+		index: number,
+		title: string,
+		text: string,
+	): Chapter => ({
+		index,
+		spineIndex: index,
+		id: `ch-${index}`,
+		title,
+		text,
+	});
+
+	it("prefers a summary/synopsis chapter near the start", () => {
+		const chapters = [
+			makeChapter(0, "Title Page", "Copyright info."),
+			makeChapter(
+				1,
+				"Summary",
+				"This book follows a detective in 1920s Paris.",
+			),
+			makeChapter(2, "Chapter One", "It was a dark and stormy night."),
+		];
+		const result = findExcerpt(chapters);
+		expect(result.source).toBe("summary-chapter");
+		expect(result.excerpt).toContain("detective in 1920s Paris");
+	});
+
+	it("matches synopsis/overview/preface/foreword titles case-insensitively", () => {
+		for (const title of ["SYNOPSIS", "Overview", "preface", "Foreword"]) {
+			const chapters = [makeChapter(0, title, "Genre-revealing content.")];
+			expect(findExcerpt(chapters).source).toBe("summary-chapter");
+		}
+	});
+
+	it("does not match a summary-titled chapter deep in the book", () => {
+		const chapters = Array.from({ length: 6 }, (_, i) =>
+			makeChapter(
+				i,
+				i === 5 ? "Summary" : `Chapter ${i}`,
+				"Some opening prose.",
+			),
+		);
+		expect(findExcerpt(chapters).source).toBe("first-chapter");
+	});
+
+	it("falls back to the first chapter when no summary chapter exists", () => {
+		const chapters = [
+			makeChapter(0, "Chapter One", "It was a dark and stormy night."),
+		];
+		const result = findExcerpt(chapters);
+		expect(result.source).toBe("first-chapter");
+		expect(result.excerpt).toBe("It was a dark and stormy night.");
+	});
+
+	it("skips a suspiciously short first chapter in favour of the next one", () => {
+		const chapters = [
+			makeChapter(0, "Title Page", "Acme Books"),
+			makeChapter(1, "Chapter One", "A".repeat(500)),
+		];
+		const result = findExcerpt(chapters);
+		expect(result.excerpt).toBe("A".repeat(500));
+	});
+
+	it("truncates excerpts to the max length", () => {
+		const chapters = [makeChapter(0, "Chapter One", "x".repeat(5000))];
+		const result = findExcerpt(chapters);
+		expect(result.excerpt.length).toBe(3000);
+	});
+
+	it("returns an empty excerpt for an empty chapter list", () => {
+		expect(findExcerpt([])).toEqual({ excerpt: "", source: "first-chapter" });
 	});
 });

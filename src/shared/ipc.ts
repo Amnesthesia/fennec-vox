@@ -9,6 +9,7 @@ export const IPC = {
 	START_CONVERSION: "start-conversion",
 	STOP_CONVERSION: "stop-conversion",
 	PREVIEW_VOICE: "preview-voice",
+	SUGGEST_NARRATION_STYLE: "suggest-narration-style",
 	OPEN_EXTERNAL: "open-external",
 
 	// main → renderer (send)
@@ -33,22 +34,64 @@ export type TtsVoice =
 export type TtsFormat = "mp3" | "opus" | "aac" | "flac" | "m4b" | "m4a";
 export type TtsModel = "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts";
 
+export type TtsProvider = "openai" | "elevenlabs" | "google";
+export type ElevenLabsModel =
+	| "eleven_v3"
+	| "eleven_multilingual_v2"
+	| "eleven_flash_v2_5";
+
 export interface ConversionOptions {
 	epubPath: string;
 	outputDir: string;
 	voice: TtsVoice;
 	format: TtsFormat;
 	ttsModel: TtsModel;
+	ttsProvider: TtsProvider;
 	chunkSize: number;
 	concurrency: number;
 	resumeFrom?: number;
 	ttsInstructions?: string;
 	redoTts?: boolean;
+	// Used instead of `voice`/`ttsModel` when ttsProvider is "elevenlabs".
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
+	// Used when ttsProvider is "google".
+	googleVoiceName?: string;
 }
 
 export interface Credentials {
 	anthropicKey: string;
 	openaiKey: string;
+	elevenLabsKey: string;
+	googleKey: string;
+}
+
+export interface PreviewVoiceOpts {
+	text: string;
+	ttsProvider: TtsProvider;
+	// OpenAI
+	voice?: TtsVoice;
+	model?: TtsModel;
+	instructions?: string;
+	// ElevenLabs
+	elevenLabsVoiceId?: string;
+	elevenLabsModel?: ElevenLabsModel;
+	// Google
+	googleVoiceName?: string;
+}
+
+// Only meaningful for OpenAI's gpt-4o-mini-tts model, which is the only TTS
+// model/provider combination that accepts free-form narration instructions.
+export interface SuggestNarrationStyleOpts {
+	epubPath: string;
+}
+
+export interface SuggestNarrationStyleResult {
+	instructions?: string;
+	recognized?: boolean;
+	bookTitle?: string;
+	bookAuthor?: string;
+	error?: string;
 }
 
 // Mirrors ProgressEvent in convert.ts (re-declared to avoid cross-package import)

@@ -1,18 +1,30 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ConversionOptions, TtsModel, TtsVoice } from "@shared/ipc";
+import type {
+	ConversionOptions,
+	PreviewVoiceOpts,
+	SuggestNarrationStyleOpts,
+	SuggestNarrationStyleResult,
+} from "@shared/ipc";
 import OpenAI from "openai";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
 import { getCredentials, saveCredentials } from "../lib/credentials/browser";
+import { elevenLabsOutputFormat } from "../lib/elevenlabs";
 import { extractChapters as extractEpubBrowser } from "../lib/epub/browser";
-import { detectMarkupProvider, estimateCosts } from "../lib/markup";
+import {
+	detectMarkupProvider,
+	estimateCosts,
+	suggestNarrationStyle,
+} from "../lib/markup";
 import { extractChaptersPdf as extractPdfBrowser } from "../lib/pdf/browser";
+import { findExcerpt } from "../lib/text";
 import type {
 	Chapter,
 	ChapterRecord,
 	ProgressEvent,
 	TtsFormat,
 } from "../lib/types";
+import { innerTtsFormat } from "../lib/types";
 
 // ── Internal state ────────────────────────────────────────────────────────────
 
@@ -115,6 +127,8 @@ export const browserApi = {
 	saveCredentials(c: {
 		anthropicKey: string;
 		openaiKey: string;
+		elevenLabsKey: string;
+		googleKey: string;
 	}): Promise<void> {
 		return saveCredentials(c);
 	},
@@ -124,17 +138,84 @@ export const browserApi = {
 		return Promise.resolve();
 	},
 
-	async previewVoice(opts: {
-		voice: TtsVoice;
-		model: TtsModel;
-		instructions?: string;
-	}): Promise<{ audio?: string; error?: string }> {
+	async previewVoice(
+		opts: PreviewVoiceOpts,
+	): Promise<{ audio?: string; error?: string }> {
+		if (opts.ttsProvider === "elevenlabs") {
+			const { elevenLabsKey } = await getCredentials();
+			if (!elevenLabsKey) return { error: "No ElevenLabs key configured." };
+			if (!opts.elevenLabsVoiceId)
+				return { error: "No ElevenLabs voice selected." };
+			try {
+				const outputFormat = elevenLabsOutputFormat("mp3");
+				const res = await fetch(
+					`https://api.elevenlabs.io/v1/text-to-speech/${opts.elevenLabsVoiceId}?output_format=${outputFormat}`,
+					{
+						method: "POST",
+						headers: {
+							"xi-api-key": elevenLabsKey,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							text: opts.text,
+							model_id: opts.elevenLabsModel ?? "eleven_v3",
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `ElevenLabs preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const arrayBuffer = await res.arrayBuffer();
+				const base64 = btoa(
+					String.fromCharCode(...new Uint8Array(arrayBuffer)),
+				);
+				return { audio: base64 };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
+		if (opts.ttsProvider === "google") {
+			const { googleKey } = await getCredentials();
+			if (!googleKey) return { error: "No Google API key configured." };
+			if (!opts.googleVoiceName) return { error: "No Google voice selected." };
+			try {
+				const voiceName = opts.googleVoiceName;
+				const langCode = voiceName.split("-").slice(0, 2).join("-") || "en-US";
+				const res = await fetch(
+					`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							input: { text: opts.text },
+							voice: { languageCode: langCode, name: voiceName },
+							audioConfig: { audioEncoding: "MP3" },
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `Google TTS preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const json = (await res.json()) as { audioContent: string };
+				return { audio: json.audioContent };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
 		const { openaiKey } = await getCredentials();
 		if (!openaiKey) return { error: "No OpenAI key configured." };
 		try {
 			const body: Record<string, unknown> = {
 				model: opts.model,
-				input: `Hey there, I'm ${opts.voice}. I'll be your narrator for this audiobook.`,
+				input: opts.text,
 				voice: opts.voice,
 			};
 			if (opts.instructions) body.instructions = opts.instructions;
@@ -155,6 +236,61 @@ export const browserApi = {
 		}
 	},
 
+	async suggestNarrationStyle(
+		_opts: SuggestNarrationStyleOpts,
+	): Promise<SuggestNarrationStyleResult> {
+		if (!pendingFile) return { error: "No file available." };
+
+		const { anthropicKey, openaiKey } = await getCredentials();
+		if (!openaiKey) return { error: "OpenAI API key is required." };
+
+		let provider: ReturnType<typeof detectMarkupProvider>;
+		try {
+			provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+		} catch (e) {
+			return { error: (e as Error).message };
+		}
+
+		try {
+			const lower = pendingFile.name.toLowerCase();
+			let chapters: Chapter[];
+			let metadata: { title: string; author: string };
+			if (lower.endsWith(".epub")) {
+				({ chapters, metadata } = await extractEpubBrowser(pendingFile));
+			} else if (lower.endsWith(".pdf")) {
+				({ chapters, metadata } = await extractPdfBrowser(pendingFile));
+			} else {
+				return { error: "Unsupported file type. Use EPUB or PDF." };
+			}
+			const { excerpt } = findExcerpt(chapters);
+			const anthropic = anthropicKey
+				? new Anthropic({
+						apiKey: anthropicKey,
+						dangerouslyAllowBrowser: true,
+					})
+				: null;
+			const openai = new OpenAI({
+				apiKey: openaiKey,
+				dangerouslyAllowBrowser: true,
+			});
+			const { instructions, recognized } = await suggestNarrationStyle(
+				provider,
+				anthropic,
+				openai,
+				metadata,
+				excerpt,
+			);
+			return {
+				instructions,
+				recognized,
+				bookTitle: metadata.title,
+				bookAuthor: metadata.author,
+			};
+		} catch (e: unknown) {
+			return { error: (e as Error).message ?? String(e) };
+		}
+	},
+
 	async startConversion(
 		opts: ConversionOptions,
 	): Promise<{ ok?: boolean; error?: string }> {
@@ -162,7 +298,8 @@ export const browserApi = {
 
 		stopRequested = false;
 
-		const { anthropicKey, openaiKey } = await getCredentials();
+		const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
+			await getCredentials();
 		if (!openaiKey)
 			return { error: "OpenAI API key is required. Configure it in Settings." };
 
@@ -172,6 +309,7 @@ export const browserApi = {
 		} catch (e) {
 			return { error: (e as Error).message };
 		}
+		const ttsProvider = opts.ttsProvider;
 
 		// Run async — return immediately so the UI can subscribe to events first
 		void (async () => {
@@ -207,6 +345,7 @@ export const browserApi = {
 					opts.chunkSize,
 					opts.ttsModel,
 					provider,
+					ttsProvider,
 				);
 				void estimate;
 
@@ -218,7 +357,9 @@ export const browserApi = {
 					completed: [],
 				});
 				emitLog(`Book: "${metadata.title}" by ${metadata.author}`);
-				emitLog(`Chapters: ${chapters.length}  |  Markup: ${provider}`);
+				emitLog(
+					`Chapters: ${chapters.length}  |  Markup: ${provider}  |  TTS: ${ttsProvider}`,
+				);
 
 				const anthropic = anthropicKey
 					? new Anthropic({
@@ -241,6 +382,12 @@ export const browserApi = {
 					voice: opts.voice,
 					format: opts.format as TtsFormat,
 					ttsModel: opts.ttsModel,
+					ttsProvider,
+					elevenLabsApiKey: elevenLabsKey || undefined,
+					elevenLabsVoiceId: opts.elevenLabsVoiceId,
+					elevenLabsModel: opts.elevenLabsModel,
+					googleApiKey: googleKey || undefined,
+					googleVoiceName: opts.googleVoiceName,
 					chunkSize: opts.chunkSize,
 					concurrency: opts.concurrency,
 					ttsInstructions: opts.ttsInstructions,
@@ -253,8 +400,9 @@ export const browserApi = {
 					return;
 				}
 
-				// Download the result
-				const ext = opts.format;
+				// Download the result (named after the format actually synthesised,
+				// since ElevenLabs returns mp3/opus regardless of the requested format)
+				const ext = innerTtsFormat(opts.format as TtsFormat, ttsProvider);
 				const mimeTypes: Record<string, string> = {
 					mp3: "audio/mpeg",
 					opus: "audio/ogg",

@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	addNarratorMarkup,
 	detectMarkupProvider,
+	detectTtsProvider,
 	estimateCosts,
+	narratorStyleFor,
+	suggestNarrationStyle,
 } from "../markup";
-import type { Chapter, ChapterRecord } from "../types";
+import type { BookMetadata, Chapter, ChapterRecord } from "../types";
 
 describe("detectMarkupProvider", () => {
 	it("throws when OpenAI key is missing", () => {
@@ -23,6 +26,38 @@ describe("detectMarkupProvider", () => {
 	it("returns gpt-4o-mini when only OpenAI key is present", () => {
 		expect(detectMarkupProvider(undefined, "sk-oai")).toBe("gpt-4o-mini");
 		expect(detectMarkupProvider("", "sk-oai")).toBe("gpt-4o-mini");
+	});
+});
+
+describe("detectTtsProvider", () => {
+	it("returns elevenlabs when a key is present", () => {
+		expect(detectTtsProvider("el-key")).toBe("elevenlabs");
+	});
+
+	it("returns openai when no key is present", () => {
+		expect(detectTtsProvider(undefined)).toBe("openai");
+		expect(detectTtsProvider("")).toBe("openai");
+	});
+});
+
+describe("narratorStyleFor", () => {
+	it("returns plain for openai regardless of elevenLabsModel", () => {
+		expect(narratorStyleFor("openai")).toBe("plain");
+		expect(narratorStyleFor("openai", "eleven_v3")).toBe("plain");
+	});
+
+	it("returns audio-tags for eleven_v3", () => {
+		expect(narratorStyleFor("elevenlabs", "eleven_v3")).toBe("audio-tags");
+	});
+
+	it("returns ssml-breaks for other ElevenLabs models", () => {
+		expect(narratorStyleFor("elevenlabs", "eleven_multilingual_v2")).toBe(
+			"ssml-breaks",
+		);
+		expect(narratorStyleFor("elevenlabs", "eleven_flash_v2_5")).toBe(
+			"ssml-breaks",
+		);
+		expect(narratorStyleFor("elevenlabs")).toBe("ssml-breaks");
 	});
 });
 
@@ -114,6 +149,27 @@ describe("estimateCosts", () => {
 		).claudeCost;
 		expect(claudeCost).toBeGreaterThan(gptCost);
 	});
+
+	it("uses ElevenLabs pricing when ttsProvider is elevenlabs", () => {
+		const chapters = [makeChapter(0, 10_000)];
+		const openaiCost = estimateCosts(
+			chapters,
+			{},
+			2000,
+			"tts-1",
+			"gpt-4o-mini",
+			"openai",
+		).ttsCost;
+		const elevenLabsCost = estimateCosts(
+			chapters,
+			{},
+			2000,
+			"tts-1",
+			"gpt-4o-mini",
+			"elevenlabs",
+		).ttsCost;
+		expect(elevenLabsCost).not.toBe(openaiCost);
+	});
 });
 
 describe("addNarratorMarkup", () => {
@@ -201,5 +257,112 @@ describe("addNarratorMarkup", () => {
 		);
 		expect(mockCreate.mock.calls.length).toBeGreaterThanOrEqual(2);
 		expect(result).toContain("marked");
+	});
+});
+
+describe("suggestNarrationStyle", () => {
+	const metadata: BookMetadata = { title: "Dune", author: "Frank Herbert" };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("parses a recognized=yes response from GPT", async () => {
+		const mockCreate = vi.fn().mockResolvedValue({
+			choices: [
+				{
+					message: {
+						content:
+							"RECOGNIZED: yes\nINSTRUCTIONS: Speak with a grand, mythic gravity.",
+					},
+				},
+			],
+		});
+		const mockOpenai = {
+			chat: { completions: { create: mockCreate } },
+		} as unknown as import("openai").default;
+
+		const result = await suggestNarrationStyle(
+			"gpt-4o-mini",
+			null,
+			mockOpenai,
+			metadata,
+			"excerpt text",
+		);
+		expect(result.recognized).toBe(true);
+		expect(result.instructions).toBe("Speak with a grand, mythic gravity.");
+	});
+
+	it("parses a recognized=no response from Claude", async () => {
+		const mockCreate = vi.fn().mockResolvedValue({
+			content: [
+				{
+					type: "text",
+					text: "RECOGNIZED: no\nINSTRUCTIONS: Speak in a brisk, plainspoken tone.",
+				},
+			],
+		});
+		const mockAnthropic = {
+			messages: { create: mockCreate },
+		} as unknown as import("@anthropic-ai/sdk").default;
+
+		const result = await suggestNarrationStyle(
+			"claude-haiku",
+			mockAnthropic,
+			{} as never,
+			metadata,
+			"excerpt text",
+		);
+		expect(result.recognized).toBe(false);
+		expect(result.instructions).toBe("Speak in a brisk, plainspoken tone.");
+	});
+
+	it("throws if claude-haiku requested but anthropic client is null", async () => {
+		await expect(
+			suggestNarrationStyle(
+				"claude-haiku",
+				null,
+				{} as never,
+				metadata,
+				"excerpt",
+			),
+		).rejects.toThrow("Anthropic client required");
+	});
+
+	it("falls back to the raw response when the format doesn't match", async () => {
+		const mockCreate = vi.fn().mockResolvedValue({
+			choices: [{ message: { content: "just a plain paragraph" } }],
+		});
+		const mockOpenai = {
+			chat: { completions: { create: mockCreate } },
+		} as unknown as import("openai").default;
+
+		const result = await suggestNarrationStyle(
+			"gpt-4o-mini",
+			null,
+			mockOpenai,
+			metadata,
+			"excerpt text",
+		);
+		expect(result.recognized).toBe(false);
+		expect(result.instructions).toBe("just a plain paragraph");
+	});
+
+	it("retries on failure and eventually throws", async () => {
+		const mockCreate = vi.fn().mockRejectedValue(new Error("network error"));
+		const mockOpenai = {
+			chat: { completions: { create: mockCreate } },
+		} as never;
+
+		await expect(
+			suggestNarrationStyle(
+				"gpt-4o-mini",
+				null,
+				mockOpenai,
+				metadata,
+				"excerpt",
+			),
+		).rejects.toThrow("network error");
+		expect(mockCreate).toHaveBeenCalledTimes(3);
 	});
 });

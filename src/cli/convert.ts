@@ -9,22 +9,34 @@ import yargs from "yargs/yargs";
 import { buildM4b, resolveFfmpegBin } from "../lib/audio";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
-import { detectMarkupProvider, estimateCosts } from "../lib/markup";
+import {
+	detectMarkupProvider,
+	detectTtsProvider,
+	estimateCosts,
+	suggestNarrationStyle,
+} from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
-import { padded, safeFilename, sleep } from "../lib/text";
+import { findExcerpt, padded, safeFilename, sleep } from "../lib/text";
 import type {
 	Chapter,
+	ElevenLabsModel,
 	MarkupProvider,
 	Progress,
 	TtsFormat,
 	TtsModel,
 	TtsVoice,
 } from "../lib/types";
-import { ttsFormat } from "../lib/types";
+import {
+	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GOOGLE_VOICE_NAME,
+	innerTtsFormat,
+	ttsFormat,
+} from "../lib/types";
 
 // ── Re-export types consumed by other modules ─────────────────────────────────
 export type {
 	Chapter,
+	ElevenLabsModel,
 	MarkupProvider,
 	Progress,
 	TtsFormat,
@@ -34,8 +46,10 @@ export type {
 export {
 	buildM4b,
 	detectMarkupProvider,
+	detectTtsProvider,
 	estimateCosts,
 	extractContent,
+	innerTtsFormat,
 	padded,
 	resolveFfmpegBin,
 	runConversion,
@@ -98,6 +112,35 @@ const argv = yargs(hideBin(process.argv))
 		type: "string" as const,
 		default: process.env.TTS_INSTRUCTIONS,
 		description: "Narration style instructions (gpt-4o-mini-tts only)",
+	})
+	.option("suggest-style", {
+		type: "boolean" as const,
+		default: false,
+		description:
+			"Print a suggested narration style for this book and exit (gpt-4o-mini-tts only)",
+	})
+	.option("elevenlabs-voice", {
+		type: "string" as const,
+		default: process.env.ELEVENLABS_VOICE_ID ?? DEFAULT_ELEVENLABS_VOICE_ID,
+		description:
+			"ElevenLabs voice ID (only used when ELEVENLABS_API_KEY is set)",
+	})
+	.option("elevenlabs-model", {
+		type: "string" as const,
+		default: (process.env.ELEVENLABS_MODEL ?? "eleven_v3") as ElevenLabsModel,
+		choices: [
+			"eleven_v3",
+			"eleven_multilingual_v2",
+			"eleven_flash_v2_5",
+		] as const,
+		description:
+			"ElevenLabs TTS model (only used when ELEVENLABS_API_KEY is set)",
+	})
+	.option("google-voice", {
+		type: "string" as const,
+		default: process.env.GOOGLE_VOICE ?? DEFAULT_GOOGLE_VOICE_NAME,
+		description:
+			"Google Cloud TTS voice name (only used when GOOGLE_API_KEY is set)",
 	})
 	.option("chunk-size", {
 		alias: "c",
@@ -180,7 +223,7 @@ async function saveProgress(dir: string, data: Progress): Promise<void> {
 
 function displayCostEstimate(
 	est: ReturnType<typeof estimateCosts>,
-	ttsModel: TtsModel,
+	ttsLabel: string,
 	concurrency: number,
 ): void {
 	const n = (v: number, d = 0) =>
@@ -221,7 +264,7 @@ function displayCostEstimate(
 	console.log(row("  Estimated cost    :", `~${usd(est.claudeCost)}`));
 	console.log(`├${rule}┤`);
 	console.log(
-		`│  OpenAI TTS (${ttsModel})${" ".repeat(W - 16 - ttsModel.length)}│`,
+		`│  ${ttsLabel}${" ".repeat(Math.max(0, W - 2 - ttsLabel.length))}│`,
 	);
 	console.log(row("  Characters        :", `~${n(est.totalTtsChars)}`));
 	console.log(row("  Estimated cost    :", `~${usd(est.ttsCost)}`));
@@ -352,6 +395,8 @@ async function main(): Promise<void> {
 
 	const anthropicKey = process.env.ANTHROPIC_API_KEY;
 	const openaiKey = process.env.OPENAI_API_KEY;
+	const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+	const googleApiKey = process.env.GOOGLE_API_KEY;
 
 	let provider: MarkupProvider;
 	try {
@@ -360,8 +405,13 @@ async function main(): Promise<void> {
 		logError((e as Error).message);
 		process.exit(1);
 	}
+	// Google takes priority over ElevenLabs only when explicitly set via env;
+	// use detectTtsProvider for the OpenAI/ElevenLabs default.
+	const ttsProvider = googleApiKey
+		? "google"
+		: detectTtsProvider(elevenLabsKey);
 
-	log(`Markup provider: ${provider}`);
+	log(`Markup provider: ${provider}  |  TTS provider: ${ttsProvider}`);
 
 	const outputDir = path.resolve(argv["output-dir"]);
 	const inputSlug = safeFilename(path.basename(inputPath, inputExt));
@@ -383,6 +433,9 @@ async function main(): Promise<void> {
 	const redoTts = argv["redo-tts"];
 	const resumeFrom = argv["resume-from"] as number | undefined;
 	const ttsInstructions = argv["tts-instructions"] as string | undefined;
+	const elevenLabsVoiceId = argv["elevenlabs-voice"];
+	const elevenLabsModel = argv["elevenlabs-model"] as ElevenLabsModel;
+	const googleVoiceName = argv["google-voice"];
 
 	const anthropic = anthropicKey
 		? new Anthropic({ apiKey: anthropicKey })
@@ -413,6 +466,33 @@ async function main(): Promise<void> {
 	}
 
 	const { chapters, metadata } = await extractContent(inputPath);
+
+	if (argv["suggest-style"]) {
+		if (ttsProvider !== "openai" || ttsModel !== "gpt-4o-mini-tts") {
+			logError(
+				"--suggest-style only applies to OpenAI's gpt-4o-mini-tts model.",
+			);
+			process.exit(1);
+		}
+		log("Generating narration style suggestion…");
+		const { excerpt } = findExcerpt(chapters);
+		const { instructions, recognized } = await suggestNarrationStyle(
+			provider,
+			anthropic,
+			openai,
+			metadata,
+			excerpt,
+		);
+		console.log(
+			`\nRecognized book: ${recognized ? "yes" : "no (based on excerpt)"}\n`,
+		);
+		console.log(`Suggested narration style instructions:\n\n${instructions}\n`);
+		console.log(
+			'Pass this via --tts-instructions "..." or the TTS_INSTRUCTIONS env var to use it.\n',
+		);
+		process.exit(0);
+	}
+
 	progress.epubFile = inputPath;
 	progress.bookTitle = metadata.title;
 	progress.bookAuthor = metadata.author;
@@ -425,8 +505,15 @@ async function main(): Promise<void> {
 		chunkSize,
 		ttsModel,
 		provider,
+		ttsProvider,
 	);
-	displayCostEstimate(estimate, ttsModel, concurrency);
+	const ttsLabel =
+		ttsProvider === "elevenlabs"
+			? `ElevenLabs TTS (${elevenLabsModel})`
+			: ttsProvider === "google"
+				? `Google Cloud TTS (${googleVoiceName})`
+				: `OpenAI TTS (${ttsModel})`;
+	displayCostEstimate(estimate, ttsLabel, concurrency);
 	const completedIndices = Object.keys(progress.completedChapters).map(Number);
 	emitProgress({
 		type: "start",
@@ -451,7 +538,7 @@ async function main(): Promise<void> {
 	}
 
 	// Re-process chapters cached from a previous run with a different audio format
-	const expectedExt = `.${ttsFormat(format)}`;
+	const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
 	for (const ch of chapters) {
 		const rec = progress.completedChapters[ch.index];
 		if (rec && !rec.file.endsWith(expectedExt)) {
@@ -493,6 +580,12 @@ async function main(): Promise<void> {
 		voice,
 		format,
 		ttsModel,
+		ttsProvider,
+		elevenLabsApiKey: elevenLabsKey,
+		elevenLabsVoiceId,
+		elevenLabsModel,
+		googleApiKey,
+		googleVoiceName,
 		chunkSize,
 		concurrency,
 		ttsInstructions,

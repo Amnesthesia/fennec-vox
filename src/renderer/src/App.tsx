@@ -1,16 +1,30 @@
 import type {
 	ConversionOptions,
+	ElevenLabsModel,
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
+	TtsProvider,
 	TtsVoice,
 } from "@shared/ipc";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GOOGLE_VOICE_NAME,
+} from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
 import FilePicker from "./components/FilePicker";
 import LogViewer from "./components/LogViewer";
+import NarrationStyleModal from "./components/NarrationStyleModal";
 import ProgressPanel from "./components/ProgressPanel";
 import SettingsPanel from "./components/SettingsPanel";
+
+export interface NarrationStyleSuggestionState {
+	instructions: string;
+	recognized: boolean;
+	bookTitle: string;
+	bookAuthor: string;
+}
 
 export interface ChapterStatus {
 	index: number;
@@ -53,6 +67,27 @@ export default function App() {
 	);
 	const [showSettings, setShowSettings] = useState(false);
 
+	const [elevenLabsKey, setElevenLabsKey] = useState("");
+	const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState(
+		DEFAULT_ELEVENLABS_VOICE_ID,
+	);
+	const [elevenLabsModel, setElevenLabsModel] =
+		useState<ElevenLabsModel>("eleven_v3");
+	const [googleKey, setGoogleKey] = useState("");
+	const [googleVoiceName, setGoogleVoiceName] = useState(
+		DEFAULT_GOOGLE_VOICE_NAME,
+	);
+	const [ttsProvider, setTtsProvider] = useState<TtsProvider>("openai");
+
+	// When a provider key is cleared, revert to OpenAI if that provider is active.
+	useEffect(() => {
+		if (!elevenLabsKey && ttsProvider === "elevenlabs")
+			setTtsProvider("openai");
+	}, [elevenLabsKey, ttsProvider]);
+	useEffect(() => {
+		if (!googleKey && ttsProvider === "google") setTtsProvider("openai");
+	}, [googleKey, ttsProvider]);
+
 	const [hasOpenAiKey, setHasOpenAiKey] = useState<boolean | null>(null);
 	const [keyInput, setKeyInput] = useState("");
 	const [saving, setSaving] = useState(false);
@@ -62,6 +97,10 @@ export default function App() {
 	const [logs, setLogs] = useState<string[]>([]);
 	const logsRef = useRef<string[]>([]);
 
+	const [narrationSuggestion, setNarrationSuggestion] =
+		useState<NarrationStyleSuggestionState | null>(null);
+	const suggestionGenRef = useRef(0);
+
 	const appendLog = useCallback((line: string) => {
 		logsRef.current = [...logsRef.current, line];
 		setLogs([...logsRef.current]);
@@ -70,6 +109,9 @@ export default function App() {
 	useEffect(() => {
 		void window.api.getCredentials().then((creds) => {
 			setHasOpenAiKey(!!creds.openaiKey);
+			setElevenLabsKey(creds.elevenLabsKey);
+			setGoogleKey(creds.googleKey);
+			if (creds.elevenLabsKey) setTtsProvider("elevenlabs");
 		});
 	}, []);
 
@@ -92,6 +134,27 @@ export default function App() {
 		if (p && !outputDir) {
 			const dir = p.replace(/[/\\][^/\\]+$/, "");
 			if (dir) setOutputDir(dir);
+		}
+
+		// Only OpenAI's gpt-4o-mini-tts model accepts narration "instructions" —
+		// ElevenLabs and tts-1/tts-1-hd have no equivalent, so skip the suggestion
+		// entirely rather than computing one that couldn't be used.
+		const gen = ++suggestionGenRef.current;
+		setNarrationSuggestion(null);
+		if (p && ttsProvider === "openai" && ttsModel === "gpt-4o-mini-tts") {
+			void window.api
+				.suggestNarrationStyle({ epubPath: p })
+				.then((result) => {
+					if (gen !== suggestionGenRef.current) return;
+					if (result.error || !result.instructions) return;
+					setNarrationSuggestion({
+						instructions: result.instructions,
+						recognized: !!result.recognized,
+						bookTitle: result.bookTitle ?? "",
+						bookAuthor: result.bookAuthor ?? "",
+					});
+				})
+				.catch(() => {});
 		}
 	};
 
@@ -209,10 +272,16 @@ export default function App() {
 			voice,
 			format,
 			ttsModel,
+			ttsProvider,
 			chunkSize,
 			concurrency,
 			ttsInstructions: ttsInstructions || undefined,
 			redoTts: redoTts || undefined,
+			elevenLabsVoiceId:
+				ttsProvider === "elevenlabs" ? elevenLabsVoiceId : undefined,
+			elevenLabsModel:
+				ttsProvider === "elevenlabs" ? elevenLabsModel : undefined,
+			googleVoiceName: ttsProvider === "google" ? googleVoiceName : undefined,
 		};
 		const result = await window.api.startConversion(opts);
 		console.debug("Conversion start result:", result);
@@ -292,9 +361,13 @@ export default function App() {
 					<SettingsPanel
 						onClose={() => {
 							setShowSettings(false);
-							void window.api
-								.getCredentials()
-								.then((creds) => setHasOpenAiKey(!!creds.openaiKey));
+							void window.api.getCredentials().then((creds) => {
+								setHasOpenAiKey(!!creds.openaiKey);
+								setElevenLabsKey(creds.elevenLabsKey);
+								setGoogleKey(creds.googleKey);
+								if (creds.elevenLabsKey && ttsProvider === "openai")
+									setTtsProvider("elevenlabs");
+							});
 						}}
 					/>
 				)}
@@ -343,6 +416,16 @@ export default function App() {
 						onConcurrencyChange={setConcurrency}
 						ttsInstructions={ttsInstructions}
 						onTtsInstructionsChange={setTtsInstructions}
+						ttsProvider={ttsProvider}
+						onTtsProviderChange={setTtsProvider}
+						hasElevenLabsKey={!!elevenLabsKey}
+						elevenLabsVoiceId={elevenLabsVoiceId}
+						onElevenLabsVoiceIdChange={setElevenLabsVoiceId}
+						elevenLabsModel={elevenLabsModel}
+						onElevenLabsModelChange={setElevenLabsModel}
+						hasGoogleKey={!!googleKey}
+						googleVoiceName={googleVoiceName}
+						onGoogleVoiceNameChange={setGoogleVoiceName}
 					/>
 
 					<div
@@ -388,10 +471,26 @@ export default function App() {
 				<SettingsPanel
 					onClose={() => {
 						setShowSettings(false);
-						void window.api
-							.getCredentials()
-							.then((creds) => setHasOpenAiKey(!!creds.openaiKey));
+						void window.api.getCredentials().then((creds) => {
+							setHasOpenAiKey(!!creds.openaiKey);
+							setElevenLabsKey(creds.elevenLabsKey);
+							setGoogleKey(creds.googleKey);
+							// If ElevenLabs key was just added, switch to it by default.
+							if (creds.elevenLabsKey && ttsProvider === "openai")
+								setTtsProvider("elevenlabs");
+						});
 					}}
+				/>
+			)}
+
+			{narrationSuggestion && (
+				<NarrationStyleModal
+					suggestion={narrationSuggestion}
+					onAccept={() => {
+						setTtsInstructions(narrationSuggestion.instructions);
+						setNarrationSuggestion(null);
+					}}
+					onDecline={() => setNarrationSuggestion(null)}
 				/>
 			)}
 		</div>

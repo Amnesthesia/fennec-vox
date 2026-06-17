@@ -1,6 +1,11 @@
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import type { ConversionOptions, TtsModel, TtsVoice } from "@shared/ipc";
+import type {
+	ConversionOptions,
+	Credentials,
+	PreviewVoiceOpts,
+	SuggestNarrationStyleOpts,
+} from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { Buffer } from "buffer";
 import { type BrowserWindow, dialog, ipcMain, shell } from "electron";
@@ -9,11 +14,16 @@ import OpenAI from "openai";
 import { buildM4b, resolveFfmpegBin } from "../lib/audio";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
-import { detectMarkupProvider, estimateCosts } from "../lib/markup";
+import { elevenLabsOutputFormat } from "../lib/elevenlabs";
+import {
+	detectMarkupProvider,
+	estimateCosts,
+	suggestNarrationStyle,
+} from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
-import { padded, safeFilename } from "../lib/text";
+import { findExcerpt, padded, safeFilename } from "../lib/text";
 import type { Chapter, ChapterRecord, Progress, TtsFormat } from "../lib/types";
-import { ttsFormat } from "../lib/types";
+import { innerTtsFormat } from "../lib/types";
 import { getCredentials, saveCredentials } from "./keychain";
 
 interface CancellationToken {
@@ -147,12 +157,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 	ipcMain.handle(IPC.GET_CREDENTIALS, () => getCredentials());
 
-	ipcMain.handle(
-		IPC.SAVE_CREDENTIALS,
-		(_event, creds: { anthropicKey: string; openaiKey: string }) => {
-			return saveCredentials(creds);
-		},
-	);
+	ipcMain.handle(IPC.SAVE_CREDENTIALS, (_event, creds: Credentials) => {
+		return saveCredentials(creds);
+	});
 
 	// ── Open external URL ─────────────────────────────────────────────────────
 
@@ -162,34 +169,135 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 	// ── Voice preview ─────────────────────────────────────────────────────────
 
-	ipcMain.handle(
-		IPC.PREVIEW_VOICE,
-		async (
-			_event,
-			opts: { voice: TtsVoice; model: TtsModel; instructions?: string },
-		) => {
-			const { openaiKey } = await getCredentials();
-			if (!openaiKey) return { error: "No OpenAI key configured." };
+	ipcMain.handle(IPC.PREVIEW_VOICE, async (_event, opts: PreviewVoiceOpts) => {
+		if (opts.ttsProvider === "elevenlabs") {
+			const { elevenLabsKey } = await getCredentials();
+			if (!elevenLabsKey) return { error: "No ElevenLabs key configured." };
+			if (!opts.elevenLabsVoiceId)
+				return { error: "No ElevenLabs voice selected." };
 			try {
-				const body: Record<string, unknown> = {
-					model: opts.model,
-					input: `Hey there, I'm ${opts.voice}. I'll be your narrator for this audiobook.`,
-					voice: opts.voice,
-				};
-				if (opts.instructions) body.instructions = opts.instructions;
-				const res = await fetch("https://api.openai.com/v1/audio/speech", {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${openaiKey}`,
-						"Content-Type": "application/json",
+				const outputFormat = elevenLabsOutputFormat("mp3");
+				const res = await fetch(
+					`https://api.elevenlabs.io/v1/text-to-speech/${opts.elevenLabsVoiceId}?output_format=${outputFormat}`,
+					{
+						method: "POST",
+						headers: {
+							"xi-api-key": elevenLabsKey,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							text: opts.text,
+							model_id: opts.elevenLabsModel ?? "eleven_v3",
+						}),
 					},
-					body: JSON.stringify(body),
-				});
-				if (!res.ok) return { error: `TTS preview failed: ${res.statusText}` };
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `ElevenLabs preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
 				const buf = await res.arrayBuffer();
 				return { audio: Buffer.from(buf).toString("base64") };
 			} catch (e: unknown) {
 				return { error: String(e) };
+			}
+		}
+
+		if (opts.ttsProvider === "google") {
+			const { googleKey } = await getCredentials();
+			if (!googleKey) return { error: "No Google API key configured." };
+			if (!opts.googleVoiceName) return { error: "No Google voice selected." };
+			try {
+				const voiceName = opts.googleVoiceName;
+				const langCode = voiceName.split("-").slice(0, 2).join("-") || "en-US";
+				const res = await fetch(
+					`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							input: { text: opts.text },
+							voice: { languageCode: langCode, name: voiceName },
+							audioConfig: { audioEncoding: "MP3" },
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `Google TTS preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const json = (await res.json()) as { audioContent: string };
+				return { audio: json.audioContent };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
+		const { openaiKey } = await getCredentials();
+		if (!openaiKey) return { error: "No OpenAI key configured." };
+		try {
+			const body: Record<string, unknown> = {
+				model: opts.model,
+				input: opts.text,
+				voice: opts.voice,
+			};
+			if (opts.instructions) body.instructions = opts.instructions;
+			const res = await fetch("https://api.openai.com/v1/audio/speech", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${openaiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(body),
+			});
+			if (!res.ok) return { error: `TTS preview failed: ${res.statusText}` };
+			const buf = await res.arrayBuffer();
+			return { audio: Buffer.from(buf).toString("base64") };
+		} catch (e: unknown) {
+			return { error: String(e) };
+		}
+	});
+
+	// ── Narration style suggestion ───────────────────────────────────────────
+
+	ipcMain.handle(
+		IPC.SUGGEST_NARRATION_STYLE,
+		async (_event, opts: SuggestNarrationStyleOpts) => {
+			const { anthropicKey, openaiKey } = await getCredentials();
+			if (!openaiKey) return { error: "OpenAI API key is required." };
+
+			let provider: ReturnType<typeof detectMarkupProvider>;
+			try {
+				provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+			} catch (e) {
+				return { error: (e as Error).message };
+			}
+
+			try {
+				const { chapters, metadata } = await extractContent(opts.epubPath);
+				const { excerpt } = findExcerpt(chapters);
+				const anthropic = anthropicKey
+					? new Anthropic({ apiKey: anthropicKey })
+					: null;
+				const openai = new OpenAI({ apiKey: openaiKey });
+				const { instructions, recognized } = await suggestNarrationStyle(
+					provider,
+					anthropic,
+					openai,
+					metadata,
+					excerpt,
+				);
+				return {
+					instructions,
+					recognized,
+					bookTitle: metadata.title,
+					bookAuthor: metadata.author,
+				};
+			} catch (e) {
+				return { error: (e as Error).message };
 			}
 		},
 	);
@@ -201,7 +309,8 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 		async (_event, opts: ConversionOptions) => {
 			if (activeToken) return { error: "A conversion is already running." };
 
-			const { anthropicKey, openaiKey } = await getCredentials();
+			const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
+				await getCredentials();
 			if (!openaiKey)
 				return {
 					error: "OpenAI API key is required. Configure it in Settings.",
@@ -213,6 +322,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			} catch (e) {
 				return { error: (e as Error).message };
 			}
+			const ttsProvider = opts.ttsProvider;
 
 			const send = (channel: string, payload?: unknown) => {
 				if (!win.isDestroyed()) win.webContents.send(channel, payload);
@@ -266,7 +376,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					await saveProgress(workDir, progress);
 
 					// Re-process chapters with a mismatched cached format
-					const expectedExt = `.${ttsFormat(format)}`;
+					const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
 					for (const ch of chapters) {
 						const rec = progress.completedChapters[ch.index];
 						if (rec && !rec.file.endsWith(expectedExt)) {
@@ -280,6 +390,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						opts.chunkSize,
 						opts.ttsModel,
 						provider,
+						ttsProvider,
 					);
 					const completedIndices = Object.keys(progress.completedChapters).map(
 						Number,
@@ -297,7 +408,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					);
 					send(
 						IPC.CONVERSION_LOG,
-						`Chapters: ${chapters.length}  |  Markup provider: ${provider}`,
+						`Chapters: ${chapters.length}  |  Markup provider: ${provider}  |  TTS: ${ttsProvider}`,
 					);
 					send(
 						IPC.CONVERSION_LOG,
@@ -328,6 +439,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						voice: opts.voice,
 						format,
 						ttsModel: opts.ttsModel,
+						ttsProvider,
+						elevenLabsApiKey: elevenLabsKey || undefined,
+						elevenLabsVoiceId: opts.elevenLabsVoiceId,
+						elevenLabsModel: opts.elevenLabsModel,
+						googleApiKey: googleKey || undefined,
+						googleVoiceName: opts.googleVoiceName,
 						chunkSize: opts.chunkSize,
 						concurrency: opts.concurrency,
 						ttsInstructions: opts.ttsInstructions,

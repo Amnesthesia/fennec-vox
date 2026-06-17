@@ -1,8 +1,10 @@
 import type {
 	ConversionOptions,
+	Credentials,
+	PreviewVoiceOpts,
 	ProgressEvent,
-	TtsModel,
-	TtsVoice,
+	SuggestNarrationStyleOpts,
+	SuggestNarrationStyleResult,
 } from "@shared/ipc";
 import { IPC } from "@shared/ipc";
 import { contextBridge, ipcRenderer } from "electron";
@@ -14,24 +16,26 @@ const api = {
 		ipcRenderer.invoke(IPC.SELECT_OUTPUT_DIR),
 
 	// Credentials
-	getCredentials: (): Promise<{ anthropicKey: string; openaiKey: string }> =>
+	getCredentials: (): Promise<Credentials> =>
 		ipcRenderer.invoke(IPC.GET_CREDENTIALS),
-	saveCredentials: (c: {
-		anthropicKey: string;
-		openaiKey: string;
-	}): Promise<void> => ipcRenderer.invoke(IPC.SAVE_CREDENTIALS, c),
+	saveCredentials: (c: Credentials): Promise<void> =>
+		ipcRenderer.invoke(IPC.SAVE_CREDENTIALS, c),
 
 	// Open a URL in the system browser
 	openExternal: (url: string): Promise<void> =>
 		ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
 	// Voice preview
-	previewVoice: (opts: {
-		voice: TtsVoice;
-		model: TtsModel;
-		instructions?: string;
-	}): Promise<{ audio?: string; error?: string }> =>
+	previewVoice: (
+		opts: PreviewVoiceOpts,
+	): Promise<{ audio?: string; error?: string }> =>
 		ipcRenderer.invoke(IPC.PREVIEW_VOICE, opts),
+
+	// Narration style suggestion
+	suggestNarrationStyle: (
+		opts: SuggestNarrationStyleOpts,
+	): Promise<SuggestNarrationStyleResult> =>
+		ipcRenderer.invoke(IPC.SUGGEST_NARRATION_STYLE, opts),
 
 	// Conversion
 	startConversion: (

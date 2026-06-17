@@ -518,6 +518,53 @@ html, body, #root {
   margin-top: 20px;
 }
 
+.narration-suggestion-box {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--accent-subtle);
+  border-radius: var(--radius);
+  padding: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* ── Provider toggle (OpenAI / ElevenLabs) ──────────────────────────────────── */
+.provider-toggle {
+  display: flex;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.provider-toggle-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.provider-toggle-btn + .provider-toggle-btn {
+  border-left: 1px solid var(--border);
+}
+
+.provider-toggle-btn:hover:not(.active) {
+  background: var(--accent-subtle);
+  color: var(--text);
+}
+
+.provider-toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* ── Misc ───────────────────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;

@@ -91,6 +91,13 @@ export async function buildM4b(
 		"utf8",
 	);
 
+	// Chapters synthesised via OpenAI are already AAC and can be copied as-is;
+	// ElevenLabs only emits mp3, so it needs transcoding into the AAC stream
+	// the m4b/m4a container expects.
+	const audioCodecArgs = chapters[0]?.file.endsWith(".aac")
+		? ["-c:a", "copy"]
+		: ["-c:a", "aac", "-b:a", "192k"];
+
 	await execFileAsync(ffmpegBin, [
 		"-f",
 		"concat",
@@ -104,8 +111,7 @@ export async function buildM4b(
 		"1",
 		"-map",
 		"0:a",
-		"-c:a",
-		"copy",
+		...audioCodecArgs,
 		"-movflags",
 		"+faststart",
 		"-y",
