@@ -9,7 +9,6 @@ import type {
 	ChapterRecord,
 	CostEstimate,
 	ElevenLabsModel,
-	GoogleTtsModel,
 	MarkupProvider,
 	TtsModel,
 	TtsProvider,
@@ -25,11 +24,8 @@ export type NarratorStyle = "plain" | "audio-tags" | "ssml-breaks";
 export function narratorStyleFor(
 	ttsProvider: TtsProvider,
 	elevenLabsModel?: ElevenLabsModel,
-	googleModel?: GoogleTtsModel,
 ): NarratorStyle {
-	if (ttsProvider === "google") {
-		return googleModel === "gemini-2.5-flash" ? "plain" : "ssml-breaks";
-	}
+	if (ttsProvider === "google") return "plain";
 	if (ttsProvider !== "elevenlabs") return "plain";
 	return elevenLabsModel === "eleven_v3" ? "audio-tags" : "ssml-breaks";
 }
@@ -287,7 +283,7 @@ const PRICING = {
 	tts1HdPerMChars: 30.0,
 	// Approximate blended rate across ElevenLabs plans (~$0.15-0.22 / 1k chars).
 	elevenLabsPerMChars: 180.0,
-	// Google Neural2/Journey voices: $16 per 1M characters.
+	// Gemini 2.5 Flash TTS (preview pricing).
 	googlePerMChars: 16.0,
 } as const;
 

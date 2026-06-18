@@ -233,14 +233,14 @@ export default function SettingsPanel({ onClose }: Props) {
 					{/* Google */}
 					<div className="settings-key-label" style={{ marginTop: 8 }}>
 						<span className="section-label" style={{ marginBottom: 0 }}>
-							Google Cloud TTS (TTS — optional)
+							Google Gemini (TTS + markup — optional)
 						</span>
 						<button
 							className="settings-get-key-link"
 							type="button"
 							onClick={() =>
 								void window.api.openExternal(
-									"https://console.cloud.google.com/apis/credentials",
+									"https://aistudio.google.com/apikey",
 								)
 							}
 						>

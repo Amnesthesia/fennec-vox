@@ -3,7 +3,6 @@ import { Buffer } from "buffer";
 import type OpenAI from "openai";
 import { synthesiseTextElevenLabs } from "./elevenlabs";
 import { concatWavBuffers, synthesiseTextGemini } from "./gemini";
-import { synthesiseTextGoogle } from "./google";
 import { addNarratorMarkup, narratorStyleFor } from "./markup";
 import { pLimit } from "./pLimit";
 import { padded, splitIntoChunks } from "./text";
@@ -13,7 +12,6 @@ import type {
 	Chapter,
 	ChapterRecord,
 	ElevenLabsModel,
-	GoogleTtsModel,
 	MarkupProvider,
 	ProgressEvent,
 	TtsFormat,
@@ -24,7 +22,6 @@ import type {
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
 	DEFAULT_GEMINI_VOICE_NAME,
-	DEFAULT_GOOGLE_VOICE_NAME,
 	innerTtsFormat,
 } from "./types";
 
@@ -67,10 +64,9 @@ interface ProcessorOpts {
 	elevenLabsApiKey?: string;
 	elevenLabsVoiceId?: string;
 	elevenLabsModel?: ElevenLabsModel;
-	// Google TTS options (used when ttsProvider is "google").
+	// Google (Gemini) TTS options (used when ttsProvider is "google").
 	googleApiKey?: string;
 	googleVoiceName?: string;
-	googleModel?: GoogleTtsModel;
 	format: TtsFormat;
 	chunkSize: number;
 	concurrency: number;
@@ -96,7 +92,6 @@ export async function processChapter(
 		elevenLabsModel,
 		googleApiKey,
 		googleVoiceName,
-		googleModel,
 		chunkSize,
 		concurrency,
 		total,
@@ -109,11 +104,7 @@ export async function processChapter(
 		`\n── Chapter ${index}/${total - 1}: "${title}" (${text.length.toLocaleString()} chars) ──`,
 	);
 
-	const narratorStyle = narratorStyleFor(
-		ttsProvider,
-		elevenLabsModel,
-		googleModel,
-	);
+	const narratorStyle = narratorStyleFor(ttsProvider, elevenLabsModel);
 	const markupKey = `chapter-${padded(index)}.${narratorStyle}.txt`;
 	let ttsText: string;
 
@@ -138,7 +129,7 @@ export async function processChapter(
 		await io.setMarkupCache(markupKey, ttsText);
 	}
 
-	const innerFmt = innerTtsFormat(format, ttsProvider, googleModel);
+	const innerFmt = innerTtsFormat(format, ttsProvider);
 	const ttsChunks = splitIntoChunks(ttsText, TTS_MAX_CHARS).length;
 	io.onProgress({ type: "chapter_tts", index, chunks: ttsChunks });
 	io.onLog(
@@ -163,7 +154,7 @@ export async function processChapter(
 					io.audioChunkCache,
 					onTtsChunk,
 				)
-			: ttsProvider === "google" && googleModel === "gemini-2.5-flash"
+			: ttsProvider === "google"
 				? await synthesiseTextGemini(
 						googleApiKey ?? "",
 						ttsText,
@@ -173,29 +164,18 @@ export async function processChapter(
 						io.audioChunkCache,
 						onTtsChunk,
 					)
-				: ttsProvider === "google"
-					? await synthesiseTextGoogle(
-							googleApiKey ?? "",
-							ttsText,
-							googleVoiceName || DEFAULT_GOOGLE_VOICE_NAME,
-							format,
-							concurrency,
-							(i) => io.chunkKey(index, i, innerFmt),
-							io.audioChunkCache,
-							onTtsChunk,
-						)
-					: await synthesiseText(
-							openai,
-							ttsText,
-							voice,
-							innerFmt as "mp3" | "opus" | "aac" | "flac",
-							ttsModel,
-							concurrency,
-							(i) => io.chunkKey(index, i, innerFmt),
-							io.audioChunkCache,
-							onTtsChunk,
-							ttsInstructions,
-						);
+				: await synthesiseText(
+						openai,
+						ttsText,
+						voice,
+						innerFmt as "mp3" | "opus" | "aac" | "flac",
+						ttsModel,
+						concurrency,
+						(i) => io.chunkKey(index, i, innerFmt),
+						io.audioChunkCache,
+						onTtsChunk,
+						ttsInstructions,
+					);
 
 	const file = await io.saveChapterAudio(index, audioBuffer, innerFmt);
 	io.onLog(
@@ -228,7 +208,6 @@ export interface RunConversionOpts {
 	elevenLabsModel?: ElevenLabsModel;
 	googleApiKey?: string;
 	googleVoiceName?: string;
-	googleModel?: GoogleTtsModel;
 	chunkSize: number;
 	concurrency: number;
 	io: ConversionIO;
@@ -265,7 +244,6 @@ export async function runConversion(
 		elevenLabsModel: opts.elevenLabsModel,
 		googleApiKey: opts.googleApiKey,
 		googleVoiceName: opts.googleVoiceName,
-		googleModel: opts.googleModel,
 		chunkSize: opts.chunkSize,
 		concurrency: opts.concurrency,
 		total: chapters.length,
@@ -299,7 +277,7 @@ export async function runConversion(
 		.sort((a, b) => a - b);
 
 	const ttsProvider = opts.ttsProvider ?? "openai";
-	const innerFmt = innerTtsFormat(opts.format, ttsProvider, opts.googleModel);
+	const innerFmt = innerTtsFormat(opts.format, ttsProvider);
 
 	let assembled: Buffer;
 	if (io.onAssemble) {

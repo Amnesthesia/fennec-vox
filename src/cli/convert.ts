@@ -24,7 +24,6 @@ import { findExcerpt, padded, safeFilename, sleep } from "../lib/text";
 import type {
 	Chapter,
 	ElevenLabsModel,
-	GoogleTtsModel,
 	MarkupProvider,
 	Progress,
 	TtsFormat,
@@ -34,8 +33,6 @@ import type {
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
 	DEFAULT_GEMINI_VOICE_NAME,
-	DEFAULT_GOOGLE_MODEL,
-	DEFAULT_GOOGLE_VOICE_NAME,
 	innerTtsFormat,
 	ttsFormat,
 } from "../lib/types";
@@ -44,7 +41,6 @@ import {
 export type {
 	Chapter,
 	ElevenLabsModel,
-	GoogleTtsModel,
 	MarkupProvider,
 	Progress,
 	TtsFormat,
@@ -147,17 +143,8 @@ const argv = yargs(hideBin(process.argv))
 	})
 	.option("google-voice", {
 		type: "string" as const,
-		default: process.env.GOOGLE_VOICE ?? DEFAULT_GOOGLE_VOICE_NAME,
-		description:
-			"Google Cloud TTS voice name (only used when GOOGLE_API_KEY is set)",
-	})
-	.option("google-model", {
-		type: "string" as const,
-		default: (process.env.GOOGLE_MODEL ??
-			DEFAULT_GOOGLE_MODEL) as GoogleTtsModel,
-		choices: ["cloud-tts", "gemini-2.5-flash"] as const,
-		description:
-			"Google TTS model: 'cloud-tts' (default) or 'gemini-2.5-flash'",
+		default: process.env.GOOGLE_VOICE ?? DEFAULT_GEMINI_VOICE_NAME,
+		description: "Gemini TTS voice name (only used when GOOGLE_API_KEY is set)",
 	})
 	.option("chunk-size", {
 		alias: "c",
@@ -314,9 +301,9 @@ function createCliIO(
 	bookTitle: string,
 	bookAuthor: string,
 	outputFile: string,
-	googleModel?: GoogleTtsModel,
+	ttsProvider: import("../lib/types").TtsProvider,
 ): ConversionIO {
-	const innerFmt = innerTtsFormat(format, "google", googleModel);
+	const innerFmt = innerTtsFormat(format, ttsProvider);
 	const needsFfmpegAssembly =
 		format === "m4b" || format === "m4a" || innerFmt === "wav";
 
@@ -424,16 +411,13 @@ async function main(): Promise<void> {
 	const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
 	const googleApiKey = process.env.GOOGLE_API_KEY;
 
-	const googleModel = argv["google-model"] as GoogleTtsModel;
-
 	// Google takes priority over ElevenLabs only when explicitly set via env;
 	// use detectTtsProvider for the OpenAI/ElevenLabs default.
 	const ttsProvider = googleApiKey
 		? "google"
 		: detectTtsProvider(elevenLabsKey);
 
-	const isGeminiMode =
-		ttsProvider === "google" && googleModel === "gemini-2.5-flash";
+	const isGeminiMode = ttsProvider === "google";
 
 	let provider: MarkupProvider;
 	if (isGeminiMode) {
@@ -447,9 +431,7 @@ async function main(): Promise<void> {
 		}
 	}
 
-	log(
-		`Markup provider: ${provider}  |  TTS provider: ${ttsProvider}  |  Google model: ${googleModel}`,
-	);
+	log(`Markup provider: ${provider}  |  TTS provider: ${ttsProvider}`);
 
 	const outputDir = path.resolve(argv["output-dir"]);
 	const inputSlug = safeFilename(path.basename(inputPath, inputExt));
@@ -473,11 +455,7 @@ async function main(): Promise<void> {
 	const ttsInstructions = argv["tts-instructions"] as string | undefined;
 	const elevenLabsVoiceId = argv["elevenlabs-voice"];
 	const elevenLabsModel = argv["elevenlabs-model"] as ElevenLabsModel;
-	const googleVoiceName = isGeminiMode
-		? argv["google-voice"] === DEFAULT_GOOGLE_VOICE_NAME
-			? DEFAULT_GEMINI_VOICE_NAME
-			: argv["google-voice"]
-		: argv["google-voice"];
+	const googleVoiceName = argv["google-voice"];
 
 	const anthropic = anthropicKey
 		? new Anthropic({ apiKey: anthropicKey })
@@ -553,9 +531,7 @@ async function main(): Promise<void> {
 		ttsProvider === "elevenlabs"
 			? `ElevenLabs TTS (${elevenLabsModel})`
 			: ttsProvider === "google"
-				? googleModel === "gemini-2.5-flash"
-					? `Gemini 2.5 Flash TTS (${googleVoiceName})`
-					: `Google Cloud TTS (${googleVoiceName})`
+				? `Gemini 2.5 Flash TTS (${googleVoiceName})`
 				: `OpenAI TTS (${ttsModel})`;
 	displayCostEstimate(estimate, ttsLabel, concurrency);
 	const completedIndices = Object.keys(progress.completedChapters).map(Number);
@@ -582,7 +558,7 @@ async function main(): Promise<void> {
 	}
 
 	// Re-process chapters cached from a previous run with a different audio format
-	const expectedExt = `.${innerTtsFormat(format, ttsProvider, googleModel)}`;
+	const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
 	for (const ch of chapters) {
 		const rec = progress.completedChapters[ch.index];
 		if (rec && !rec.file.endsWith(expectedExt)) {
@@ -613,7 +589,7 @@ async function main(): Promise<void> {
 		metadata.title,
 		metadata.author,
 		outputFile,
-		googleModel,
+		ttsProvider,
 	);
 
 	const { assembled, chapterCount, total } = await runConversion({
@@ -631,7 +607,6 @@ async function main(): Promise<void> {
 		elevenLabsModel,
 		googleApiKey,
 		googleVoiceName,
-		googleModel,
 		chunkSize,
 		concurrency,
 		ttsInstructions,
@@ -645,7 +620,7 @@ async function main(): Promise<void> {
 
 	// For m4b/m4a and Gemini WAV: onAssemble wrote the file directly.
 	// For other formats write it now.
-	const cliInnerFmt = innerTtsFormat(format, ttsProvider, googleModel);
+	const cliInnerFmt = innerTtsFormat(format, ttsProvider);
 	if (format !== "m4b" && format !== "m4a" && cliInnerFmt !== "wav") {
 		await fs.writeFile(outputFile, assembled);
 	}

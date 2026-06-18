@@ -29,9 +29,9 @@ import { findExcerpt, padded, safeFilename } from "../lib/text";
 import type {
 	Chapter,
 	ChapterRecord,
-	GoogleTtsModel,
 	Progress,
 	TtsFormat,
+	TtsProvider,
 } from "../lib/types";
 import { innerTtsFormat } from "../lib/types";
 import { getCredentials, saveCredentials } from "./keychain";
@@ -66,9 +66,9 @@ function createNodeIO(
 	bookAuthor: string,
 	outputFile: string,
 	send: (channel: string, payload?: unknown) => void,
-	googleModel?: GoogleTtsModel,
+	ttsProvider: TtsProvider,
 ): ConversionIO {
-	const innerFmt = innerTtsFormat(format, "google", googleModel);
+	const innerFmt = innerTtsFormat(format, ttsProvider);
 	const needsFfmpegAssembly =
 		format === "m4b" || format === "m4a" || innerFmt === "wav";
 
@@ -223,10 +223,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			}
 		}
 
-		if (
-			opts.ttsProvider === "google" &&
-			opts.googleModel === "gemini-2.5-flash"
-		) {
+		if (opts.ttsProvider === "google") {
 			const { googleKey } = await getCredentials();
 			if (!googleKey) return { error: "No Google API key configured." };
 			if (!opts.googleVoiceName) return { error: "No Gemini voice selected." };
@@ -267,38 +264,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 				const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
 				if (!data) return { error: "No audio in Gemini TTS response" };
 				return { audio: data };
-			} catch (e: unknown) {
-				return { error: String(e) };
-			}
-		}
-
-		if (opts.ttsProvider === "google") {
-			const { googleKey } = await getCredentials();
-			if (!googleKey) return { error: "No Google API key configured." };
-			if (!opts.googleVoiceName) return { error: "No Google voice selected." };
-			try {
-				const voiceName = opts.googleVoiceName;
-				const langCode = voiceName.split("-").slice(0, 2).join("-") || "en-US";
-				const res = await fetch(
-					`https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`,
-					{
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							input: { text: opts.text },
-							voice: { languageCode: langCode, name: voiceName },
-							audioConfig: { audioEncoding: "MP3" },
-						}),
-					},
-				);
-				if (!res.ok) {
-					const errBody = await res.text().catch(() => "");
-					return {
-						error: `Google TTS preview failed (${res.status}): ${errBody || res.statusText}`,
-					};
-				}
-				const json = (await res.json()) as { audioContent: string };
-				return { audio: json.audioContent };
 			} catch (e: unknown) {
 				return { error: String(e) };
 			}
@@ -380,13 +345,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 			const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
 				await getCredentials();
 			const ttsProvider = opts.ttsProvider;
-			const googleModel = opts.googleModel;
-			const isGeminiMode =
-				ttsProvider === "google" && googleModel === "gemini-2.5-flash";
+			const isGeminiMode = ttsProvider === "google";
 
 			if (!openaiKey && !isGeminiMode)
 				return {
-					error: "OpenAI API key is required. Configure it in Settings.",
+					error:
+						"OpenAI or Google API key is required. Configure it in Settings.",
 				};
 
 			let provider: import("../lib/types").MarkupProvider;
@@ -452,7 +416,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					await saveProgress(workDir, progress);
 
 					// Re-process chapters with a mismatched cached format
-					const expectedExt = `.${innerTtsFormat(format, ttsProvider, googleModel)}`;
+					const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
 					for (const ch of chapters) {
 						const rec = progress.completedChapters[ch.index];
 						if (rec && !rec.file.endsWith(expectedExt)) {
@@ -506,7 +470,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						metadata.author,
 						outputFile,
 						send,
-						googleModel,
+						ttsProvider,
 					);
 
 					const { assembled, chapterCount, total } = await runConversion({
@@ -524,7 +488,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						elevenLabsModel: opts.elevenLabsModel,
 						googleApiKey: googleKey || undefined,
 						googleVoiceName: opts.googleVoiceName,
-						googleModel,
 						chunkSize: opts.chunkSize,
 						concurrency: opts.concurrency,
 						ttsInstructions: opts.ttsInstructions,
@@ -543,11 +506,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 					// For m4b/m4a and Gemini WAV: onAssemble already wrote the file.
 					// For other formats write it now.
-					const innerFmtCheck = innerTtsFormat(
-						format,
-						ttsProvider,
-						googleModel,
-					);
+					const innerFmtCheck = innerTtsFormat(format, ttsProvider);
 					if (format !== "m4b" && format !== "m4a" && innerFmtCheck !== "wav") {
 						await fs.writeFile(outputFile, assembled);
 					}

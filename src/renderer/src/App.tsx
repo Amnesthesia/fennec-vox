@@ -1,7 +1,6 @@
 import type {
 	ConversionOptions,
 	ElevenLabsModel,
-	GoogleTtsModel,
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
@@ -12,8 +11,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
 	DEFAULT_GEMINI_VOICE_NAME,
-	DEFAULT_GOOGLE_MODEL,
-	DEFAULT_GOOGLE_VOICE_NAME,
 } from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
 import FilePicker from "./components/FilePicker";
@@ -78,11 +75,6 @@ export default function App() {
 		useState<ElevenLabsModel>("eleven_v3");
 	const [googleKey, setGoogleKey] = useState("");
 	const [googleVoiceName, setGoogleVoiceName] = useState(
-		DEFAULT_GOOGLE_VOICE_NAME,
-	);
-	const [googleModel, setGoogleModel] =
-		useState<GoogleTtsModel>(DEFAULT_GOOGLE_MODEL);
-	const [geminiVoiceName, setGeminiVoiceName] = useState(
 		DEFAULT_GEMINI_VOICE_NAME,
 	);
 	const [ttsProvider, setTtsProvider] = useState<TtsProvider>("openai");
@@ -100,6 +92,8 @@ export default function App() {
 	const [keyInput, setKeyInput] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [keyError, setKeyError] = useState("");
+
+	const [geminiKeyInput, setGeminiKeyInput] = useState("");
 
 	const [convState, setConvState] = useState<AppConversionState>(INITIAL_STATE);
 	const [logs, setLogs] = useState<string[]>([]);
@@ -124,17 +118,27 @@ export default function App() {
 	}, []);
 
 	const handleSaveKey = async () => {
-		const key = keyInput.trim();
-		if (!key.startsWith("sk-")) {
-			setKeyError("Key should start with sk-");
+		const openaiKey = keyInput.trim();
+		const geminiKey = geminiKeyInput.trim();
+		if (!openaiKey && !geminiKey) {
+			setKeyError("Enter an OpenAI or Google Gemini API key");
+			return;
+		}
+		if (openaiKey && !openaiKey.startsWith("sk-")) {
+			setKeyError("OpenAI key should start with sk-");
 			return;
 		}
 		setSaving(true);
 		setKeyError("");
 		const existing = await window.api.getCredentials();
-		await window.api.saveCredentials({ ...existing, openaiKey: key });
+		await window.api.saveCredentials({
+			...existing,
+			...(openaiKey ? { openaiKey } : {}),
+			...(geminiKey ? { googleKey: geminiKey } : {}),
+		});
 		setSaving(false);
-		setHasOpenAiKey(true);
+		if (openaiKey) setHasOpenAiKey(true);
+		if (geminiKey) setGoogleKey(geminiKey);
 	};
 
 	const handleEpubChange = (p: string) => {
@@ -289,13 +293,7 @@ export default function App() {
 				ttsProvider === "elevenlabs" ? elevenLabsVoiceId : undefined,
 			elevenLabsModel:
 				ttsProvider === "elevenlabs" ? elevenLabsModel : undefined,
-			googleVoiceName:
-				ttsProvider === "google"
-					? googleModel === "gemini-2.5-flash"
-						? geminiVoiceName
-						: googleVoiceName
-					: undefined,
-			googleModel: ttsProvider === "google" ? googleModel : undefined,
+			googleVoiceName: ttsProvider === "google" ? googleVoiceName : undefined,
 		};
 		const result = await window.api.startConversion(opts);
 		console.debug("Conversion start result:", result);
@@ -330,21 +328,12 @@ export default function App() {
 					<div className="setup-card">
 						<div className="setup-logo">&nbsp;</div>
 						<p className="setup-sub">
-							<b>Fennec Vox</b> uses the OpenAI API for text-to-speech
-							synthesis. Paste your API key below to get started — it will be
-							stored securely in your system keychain.
+							<b>Fennec Vox</b> needs an API key to get started. Enter your{" "}
+							<b>OpenAI</b> key, your <b>Google Gemini</b> key, or both — keys
+							are stored securely in your system keychain.
 						</p>
-						<a
-							className="setup-ext-link"
-							onClick={() =>
-								void window.api.openExternal(
-									"https://platform.openai.com/api-keys",
-								)
-							}
-						>
-							Get your API key at platform.openai.com →
-						</a>
 						<div className="setup-field">
+							<label className="setup-field-label">OpenAI API Key</label>
 							<input
 								type="password"
 								className="setup-key-input"
@@ -358,13 +347,51 @@ export default function App() {
 								spellCheck={false}
 								autoComplete="off"
 							/>
-							{keyError && <span className="setup-key-error">{keyError}</span>}
+							<a
+								className="setup-ext-link"
+								style={{ marginTop: 4 }}
+								onClick={() =>
+									void window.api.openExternal(
+										"https://platform.openai.com/api-keys",
+									)
+								}
+							>
+								Get key at platform.openai.com →
+							</a>
 						</div>
+						<div className="setup-field">
+							<label className="setup-field-label">Google Gemini API Key</label>
+							<input
+								type="password"
+								className="setup-key-input"
+								placeholder="AIza…"
+								value={geminiKeyInput}
+								onChange={(e) => {
+									setGeminiKeyInput(e.target.value);
+									setKeyError("");
+								}}
+								onKeyDown={(e) => e.key === "Enter" && void handleSaveKey()}
+								spellCheck={false}
+								autoComplete="off"
+							/>
+							<a
+								className="setup-ext-link"
+								style={{ marginTop: 4 }}
+								onClick={() =>
+									void window.api.openExternal(
+										"https://aistudio.google.com/apikey",
+									)
+								}
+							>
+								Get key at aistudio.google.com →
+							</a>
+						</div>
+						{keyError && <span className="setup-key-error">{keyError}</span>}
 						<button
 							className="btn btn-primary setup-btn"
 							type="button"
 							onClick={() => void handleSaveKey()}
-							disabled={saving || !keyInput.trim()}
+							disabled={saving || (!keyInput.trim() && !geminiKeyInput.trim())}
 						>
 							{saving ? "Saving…" : "Save & continue"}
 						</button>
@@ -440,10 +467,6 @@ export default function App() {
 						hasGoogleKey={!!googleKey}
 						googleVoiceName={googleVoiceName}
 						onGoogleVoiceNameChange={setGoogleVoiceName}
-						googleModel={googleModel}
-						onGoogleModelChange={setGoogleModel}
-						geminiVoiceName={geminiVoiceName}
-						onGeminiVoiceNameChange={setGeminiVoiceName}
 					/>
 
 					<div
