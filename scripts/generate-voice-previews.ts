@@ -7,11 +7,14 @@
  * OpenAI voices use the gpt-4o-mini-tts model.
  * ElevenLabs built-in voices use eleven_multilingual_v2 (voice IDs are used as
  * directory names so the app can look them up by the same ID used for synthesis).
+ * Gemini voices use gemini-2.5-flash-preview-tts; WAV output is converted to MP3
+ * via ffmpeg-static so the static files stay in a uniform format.
  *
  * Usage:
  *   pnpm run generate-previews          # skip already-cached files
  *   pnpm run generate-previews --force  # regenerate everything
  *   pnpm run generate-previews --skip-elevenlabs  # OpenAI only
+ *   pnpm run generate-previews --skip-gemini      # skip Gemini voices
  *
  * Poems are read from scripts/poems/*.txt — the filename (without .txt) is used
  * as the slug and the file content is sent to the TTS API verbatim.
@@ -20,11 +23,12 @@
  * app knows which slugs are available for each voice/voiceId without needing
  * filesystem access at runtime.
  *
- * Reads keys from env vars (OPENAI_API_KEY / ELEVENLABS_API_KEY) or the system
- * keychain (same store the app uses). ElevenLabs generation is skipped gracefully
- * if no key is found and --skip-elevenlabs is not explicitly required.
+ * Reads keys from env vars (OPENAI_API_KEY / ELEVENLABS_API_KEY / GEMINI_API_KEY
+ * or GOOGLE_API_KEY) or the system keychain (same store the app uses). Gemini
+ * generation is skipped gracefully if no key is found.
  */
 
+import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "fs-extra";
 
@@ -61,20 +65,23 @@ const ELEVENLABS_VOICES: { id: string; name: string }[] = [
 	{ id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam" },
 ];
 
-// Must stay in sync with GOOGLE_VOICES in src/lib/types.ts
-const GOOGLE_VOICES: { name: string; label: string }[] = [
-	{ name: "en-US-Journey-D", label: "Journey D" },
-	{ name: "en-US-Journey-F", label: "Journey F" },
-	{ name: "en-US-Journey-O", label: "Journey O" },
-	{ name: "en-US-Neural2-A", label: "Neural2 A" },
-	{ name: "en-US-Neural2-D", label: "Neural2 D" },
-	{ name: "en-US-Neural2-F", label: "Neural2 F" },
-	{ name: "en-US-Neural2-J", label: "Neural2 J" },
+// Must stay in sync with GEMINI_VOICES in src/lib/types.ts
+const GEMINI_VOICES: { name: string; label: string }[] = [
+	{ name: "Charon", label: "Charon" },
+	{ name: "Aoede", label: "Aoede" },
+	{ name: "Fenrir", label: "Fenrir" },
+	{ name: "Kore", label: "Kore" },
+	{ name: "Puck", label: "Puck" },
+	{ name: "Zephyr", label: "Zephyr" },
+	{ name: "Leda", label: "Leda" },
+	{ name: "Orus", label: "Orus" },
 ];
 
 const force = process.argv.includes("--force");
 const skipElevenLabs = process.argv.includes("--skip-elevenlabs");
-const skipGoogle = process.argv.includes("--skip-google");
+const skipGemini =
+	process.argv.includes("--skip-gemini") ||
+	process.argv.includes("--skip-google");
 const concurrency = parseInt(
 	process.argv.find((a) => a.startsWith("--concurrency="))?.split("=")[1] ??
 		"8",
@@ -112,7 +119,8 @@ async function getElevenLabsKey(): Promise<string | null> {
 	}
 }
 
-async function getGoogleKey(): Promise<string | null> {
+async function getGeminiKey(): Promise<string | null> {
+	if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
 	if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
 	try {
 		const keytar = loadKeytar();
@@ -120,6 +128,48 @@ async function getGoogleKey(): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+function resolveFfmpegBin(): string {
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const p = (require as (id: string) => string | null)("ffmpeg-static");
+		if (p) return p;
+	} catch {
+		/* not installed */
+	}
+	return "ffmpeg";
+}
+
+async function convertWavToMp3(wavBuf: Buffer): Promise<Buffer> {
+	const ffmpeg = resolveFfmpegBin();
+	return new Promise((resolve, reject) => {
+		const chunks: Buffer[] = [];
+		const proc = spawn(
+			ffmpeg,
+			[
+				"-f",
+				"wav",
+				"-i",
+				"pipe:0",
+				"-codec:a",
+				"libmp3lame",
+				"-qscale:a",
+				"2",
+				"-f",
+				"mp3",
+				"pipe:1",
+			],
+			{ stdio: ["pipe", "pipe", "ignore"] },
+		);
+		proc.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+		proc.on("close", (code) => {
+			if (code !== 0) reject(new Error(`ffmpeg exited with code ${code}`));
+			else resolve(Buffer.concat(chunks));
+		});
+		proc.on("error", reject);
+		proc.stdin?.end(wavBuf);
+	});
 }
 
 interface Poem {
@@ -228,7 +278,7 @@ async function generateElevenLabsOne(
 	);
 }
 
-async function generateGoogleOne(
+async function generateGeminiOne(
 	apiKey: string,
 	voiceName: string,
 	poem: Poem,
@@ -240,16 +290,21 @@ async function generateGoogleOne(
 		return;
 	}
 
-	const langCode = voiceName.split("-").slice(0, 2).join("-") || "en-US";
 	const res = await fetch(
-		`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`,
+		`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
-				input: { text: poem.text },
-				voice: { languageCode: langCode, name: voiceName },
-				audioConfig: { audioEncoding: "MP3" },
+				contents: [{ parts: [{ text: poem.text }], role: "user" }],
+				generationConfig: {
+					responseModalities: ["AUDIO"],
+					speechConfig: {
+						voiceConfig: {
+							prebuiltVoiceConfig: { voiceName },
+						},
+					},
+				},
 			}),
 		},
 	);
@@ -257,16 +312,24 @@ async function generateGoogleOne(
 	if (!res.ok) {
 		const errBody = await res.text().catch(() => "");
 		throw new Error(
-			`Google TTS API error ${res.status} ${res.statusText}: ${errBody}`,
+			`Gemini TTS API error ${res.status} ${res.statusText}: ${errBody}`,
 		);
 	}
 
-	const json = (await res.json()) as { audioContent: string };
-	const buf = Buffer.from(json.audioContent, "base64");
+	const json = (await res.json()) as {
+		candidates: Array<{
+			content: { parts: Array<{ inlineData: { data: string } }> };
+		}>;
+	};
+	const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
+	if (!data) throw new Error("No audio in Gemini TTS response");
+
+	const wavBuf = Buffer.from(data, "base64");
+	const mp3Buf = await convertWavToMp3(wavBuf);
 	await fs.ensureDir(path.dirname(outFile));
-	await fs.writeFile(outFile, buf);
+	await fs.writeFile(outFile, mp3Buf);
 	console.log(
-		`  done   ${voiceName}/${poem.slug}  (${(buf.length / 1024).toFixed(0)} KB)`,
+		`  done   ${voiceName}/${poem.slug}  (${(mp3Buf.length / 1024).toFixed(0)} KB)`,
 	);
 }
 
@@ -368,38 +431,38 @@ async function main() {
 		}).catch(() => {});
 	}
 
-	// ── Google ──────────────────────────────────────────────────────────────────
+	// ── Gemini ──────────────────────────────────────────────────────────────────
 
-	let googleErrors = 0;
-	let googleKey: string | null = null;
+	let geminiErrors = 0;
+	let geminiKey: string | null = null;
 
-	if (!skipGoogle) {
-		googleKey = await getGoogleKey();
-		if (!googleKey) {
+	if (!skipGemini) {
+		geminiKey = await getGeminiKey();
+		if (!geminiKey) {
 			console.log(
-				"\n[Google] No API key found — skipping. Set GOOGLE_API_KEY or use --skip-google.\n",
+				"\n[Gemini] No API key found — skipping. Set GEMINI_API_KEY or GOOGLE_API_KEY, or use --skip-gemini.\n",
 			);
 		}
 	} else {
-		console.log("\n[Google] Skipped (--skip-google).\n");
+		console.log("\n[Gemini] Skipped (--skip-gemini).\n");
 	}
 
-	if (googleKey) {
-		const gKey = googleKey;
-		const gTasks = GOOGLE_VOICES.flatMap(({ name }) =>
-			poems.map((poem) => () => generateGoogleOne(gKey, name, poem)),
+	if (geminiKey) {
+		const gKey = geminiKey;
+		const gTasks = GEMINI_VOICES.flatMap(({ name }) =>
+			poems.map((poem) => () => generateGeminiOne(gKey, name, poem)),
 		);
 
 		console.log(
-			`\n[Google] Voices: ${GOOGLE_VOICES.length}  |  Poems: ${poems.length}  |  Total: ${gTasks.length} files  |  Concurrency: ${concurrency}`,
+			`\n[Gemini] Voices: ${GEMINI_VOICES.length}  |  Poems: ${poems.length}  |  Total: ${gTasks.length} files  |  Concurrency: ${concurrency}`,
 		);
 		console.log("");
 
 		await runWithConcurrency(gTasks, concurrency, (e, i) => {
-			const voice = GOOGLE_VOICES[Math.floor(i / poems.length)];
+			const voice = GEMINI_VOICES[Math.floor(i / poems.length)];
 			const poem = poems[i % poems.length];
 			console.error(`  ERROR  ${voice?.name}/${poem?.slug}: ${e.message}`);
-			googleErrors++;
+			geminiErrors++;
 		}).catch(() => {});
 	}
 
@@ -428,10 +491,10 @@ async function main() {
 		}
 	}
 
-	if (googleKey) {
-		for (const { name } of GOOGLE_VOICES) manifest[name] = poemSlugs;
+	if (geminiKey) {
+		for (const { name } of GEMINI_VOICES) manifest[name] = poemSlugs;
 	} else {
-		for (const { name } of GOOGLE_VOICES) {
+		for (const { name } of GEMINI_VOICES) {
 			if (existingManifest[name]) manifest[name] = existingManifest[name];
 		}
 	}
@@ -450,7 +513,7 @@ async function main() {
 	});
 	console.log(`Wrote poems.json`);
 
-	const totalErrors = openaiErrors + elevenLabsErrors + googleErrors;
+	const totalErrors = openaiErrors + elevenLabsErrors + geminiErrors;
 	if (totalErrors > 0) {
 		console.error(`\nDone with ${totalErrors} error(s).`);
 		process.exit(1);

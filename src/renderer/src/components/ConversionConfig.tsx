@@ -254,6 +254,13 @@ export default function ConversionConfig({
 
 	const handleGoogleVoiceChange = async (vName: string) => {
 		onGoogleVoiceNameChange(vName);
+		const manifest = await getManifest().catch(() => null);
+		const staticSlugs = manifest?.[vName] ?? [];
+		if (staticSlugs.length > 0) {
+			const pick = staticSlugs[Math.floor(Math.random() * staticSlugs.length)];
+			if (pick) playSlug(vName, pick);
+			return;
+		}
 		const slugs = Object.keys(poemTexts);
 		if (slugs.length === 0) return;
 		const pick = slugs[Math.floor(Math.random() * slugs.length)];
