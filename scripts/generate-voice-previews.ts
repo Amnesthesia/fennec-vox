@@ -278,10 +278,15 @@ async function generateElevenLabsOne(
 	);
 }
 
+async function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function generateGeminiOne(
 	apiKey: string,
 	voiceName: string,
 	poem: Poem,
+	maxRetries = 4,
 ): Promise<void> {
 	const outFile = path.join(OUT_DIR, voiceName, `${poem.slug}.mp3`);
 
@@ -290,47 +295,66 @@ async function generateGeminiOne(
 		return;
 	}
 
-	const res = await fetch(
-		`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				contents: [{ parts: [{ text: poem.text }], role: "user" }],
-				generationConfig: {
-					responseModalities: ["AUDIO"],
-					speechConfig: {
-						voiceConfig: {
-							prebuiltVoiceConfig: { voiceName },
-						},
-					},
+	const body = JSON.stringify({
+		contents: [{ parts: [{ text: poem.text }], role: "user" }],
+		generationConfig: {
+			responseModalities: ["AUDIO"],
+			speechConfig: {
+				voiceConfig: {
+					prebuiltVoiceConfig: { voiceName },
 				},
-			}),
+			},
 		},
-	);
+	});
 
-	if (!res.ok) {
-		const errBody = await res.text().catch(() => "");
-		throw new Error(
-			`Gemini TTS API error ${res.status} ${res.statusText}: ${errBody}`,
+	let lastError: Error | null = null;
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		if (attempt > 0) {
+			const delay = 2 ** attempt * 1000;
+			console.log(
+				`  retry  ${voiceName}/${poem.slug} (attempt ${attempt + 1}, waiting ${delay / 1000}s…)`,
+			);
+			await sleep(delay);
+		}
+
+		const res = await fetch(
+			`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body,
+			},
 		);
+
+		if (!res.ok) {
+			const errBody = await res.text().catch(() => "");
+			lastError = new Error(
+				`Gemini TTS API error ${res.status} ${res.statusText}: ${errBody}`,
+			);
+			// Only retry on transient server errors
+			if (res.status >= 500) continue;
+			throw lastError;
+		}
+
+		const json = (await res.json()) as {
+			candidates: Array<{
+				content: { parts: Array<{ inlineData: { data: string } }> };
+			}>;
+		};
+		const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
+		if (!data) throw new Error("No audio in Gemini TTS response");
+
+		const wavBuf = Buffer.from(data, "base64");
+		const mp3Buf = await convertWavToMp3(wavBuf);
+		await fs.ensureDir(path.dirname(outFile));
+		await fs.writeFile(outFile, mp3Buf);
+		console.log(
+			`  done   ${voiceName}/${poem.slug}  (${(mp3Buf.length / 1024).toFixed(0)} KB)`,
+		);
+		return;
 	}
 
-	const json = (await res.json()) as {
-		candidates: Array<{
-			content: { parts: Array<{ inlineData: { data: string } }> };
-		}>;
-	};
-	const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
-	if (!data) throw new Error("No audio in Gemini TTS response");
-
-	const wavBuf = Buffer.from(data, "base64");
-	const mp3Buf = await convertWavToMp3(wavBuf);
-	await fs.ensureDir(path.dirname(outFile));
-	await fs.writeFile(outFile, mp3Buf);
-	console.log(
-		`  done   ${voiceName}/${poem.slug}  (${(mp3Buf.length / 1024).toFixed(0)} KB)`,
-	);
+	throw lastError ?? new Error("Gemini TTS failed after retries");
 }
 
 async function runWithConcurrency<T>(
