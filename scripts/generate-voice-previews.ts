@@ -7,7 +7,7 @@
  * OpenAI voices use the gpt-4o-mini-tts model.
  * ElevenLabs built-in voices use eleven_multilingual_v2 (voice IDs are used as
  * directory names so the app can look them up by the same ID used for synthesis).
- * Gemini voices use gemini-2.5-flash-preview-tts; WAV output is converted to MP3
+ * Gemini voices use gemini-2.5-pro-preview-tts; WAV output is converted to MP3
  * via ffmpeg-static so the static files stay in a uniform format.
  *
  * Usage:
@@ -318,7 +318,7 @@ async function generateGeminiOne(
 		}
 
 		const res = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
+			`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${apiKey}`,
 			{
 				method: "POST",
 				headers: { "Content-Type": "application/json" },

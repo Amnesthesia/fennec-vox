@@ -184,7 +184,7 @@ export const browserApi = {
 			if (!opts.googleVoiceName) return { error: "No Gemini voice selected." };
 			try {
 				const res = await fetch(
-					`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${googleKey}`,
+					`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${googleKey}`,
 					{
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
