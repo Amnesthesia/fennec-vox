@@ -7,7 +7,7 @@
  * OpenAI voices use the gpt-4o-mini-tts model.
  * ElevenLabs built-in voices use eleven_multilingual_v2 (voice IDs are used as
  * directory names so the app can look them up by the same ID used for synthesis).
- * Gemini voices use gemini-2.5-pro-preview-tts; WAV output is converted to MP3
+ * Gemini voices use gemini-3.1-flash-tts-preview; WAV output is converted to MP3
  * via ffmpeg-static so the static files stay in a uniform format.
  *
  * Usage:
@@ -84,9 +84,11 @@ const skipGemini =
 	process.argv.includes("--skip-google");
 const concurrency = parseInt(
 	process.argv.find((a) => a.startsWith("--concurrency="))?.split("=")[1] ??
-		"8",
+		"4",
 	10,
 );
+// Gemini TTS has stricter rate limits; use a lower cap regardless of the global concurrency
+const geminiConcurrency = Math.min(concurrency, 2);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -318,7 +320,7 @@ async function generateGeminiOne(
 		}
 
 		const res = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${apiKey}`,
+			`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
 			{
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -478,11 +480,11 @@ async function main() {
 		);
 
 		console.log(
-			`\n[Gemini] Voices: ${GEMINI_VOICES.length}  |  Poems: ${poems.length}  |  Total: ${gTasks.length} files  |  Concurrency: ${concurrency}`,
+			`\n[Gemini] Voices: ${GEMINI_VOICES.length}  |  Poems: ${poems.length}  |  Total: ${gTasks.length} files  |  Concurrency: ${geminiConcurrency}`,
 		);
 		console.log("");
 
-		await runWithConcurrency(gTasks, concurrency, (e, i) => {
+		await runWithConcurrency(gTasks, geminiConcurrency, (e, i) => {
 			const voice = GEMINI_VOICES[Math.floor(i / poems.length)];
 			const poem = poems[i % poems.length];
 			console.error(`  ERROR  ${voice?.name}/${poem?.slug}: ${e.message}`);

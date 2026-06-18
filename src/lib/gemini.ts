@@ -4,7 +4,7 @@ import { sleep, splitIntoChunks } from "./text";
 import type { ChunkCache } from "./tts";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_TTS_MODEL = "gemini-2.5-pro-preview-tts";
+const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const GEMINI_MARKUP_MODEL = "gemini-2.5-flash";
 // Gemini TTS PCM output: 24kHz, 16-bit mono
 const GEMINI_SAMPLE_RATE = 24000;
