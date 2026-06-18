@@ -39,6 +39,8 @@ export type ElevenLabsModel =
 	| "eleven_v3"
 	| "eleven_multilingual_v2"
 	| "eleven_flash_v2_5";
+export type GoogleTtsModel = "cloud-tts" | "gemini-2.5-flash";
+export type MarkupProvider = "claude-haiku" | "gpt-4o-mini" | "gemini-flash";
 
 export interface ConversionOptions {
 	epubPath: string;
@@ -57,6 +59,7 @@ export interface ConversionOptions {
 	elevenLabsModel?: ElevenLabsModel;
 	// Used when ttsProvider is "google".
 	googleVoiceName?: string;
+	googleModel?: GoogleTtsModel;
 }
 
 export interface Credentials {
@@ -78,6 +81,7 @@ export interface PreviewVoiceOpts {
 	elevenLabsModel?: ElevenLabsModel;
 	// Google
 	googleVoiceName?: string;
+	googleModel?: GoogleTtsModel;
 }
 
 // Only meaningful for OpenAI's gpt-4o-mini-tts model, which is the only TTS

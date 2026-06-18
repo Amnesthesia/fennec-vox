@@ -1,4 +1,4 @@
-export type MarkupProvider = "claude-haiku" | "gpt-4o-mini";
+export type MarkupProvider = "claude-haiku" | "gpt-4o-mini" | "gemini-flash";
 export type TtsVoice =
 	| "alloy"
 	| "ash"
@@ -60,7 +60,9 @@ export function googleTtsFormat(format: TtsFormat): "mp3" | "opus" {
 export function innerTtsFormat(
 	format: TtsFormat,
 	provider: TtsProvider,
-): "mp3" | "opus" | "aac" | "flac" {
+	googleModel?: GoogleTtsModel,
+): "mp3" | "opus" | "aac" | "flac" | "wav" {
+	if (provider === "google" && googleModel === "gemini-2.5-flash") return "wav";
 	if (provider === "elevenlabs" || provider === "google") {
 		return format === "opus" ? "opus" : "mp3";
 	}
@@ -80,6 +82,21 @@ export const GOOGLE_VOICES: { name: string; label: string }[] = [
 	{ name: "en-US-Neural2-F", label: "Neural2 F (female)" },
 	{ name: "en-US-Neural2-J", label: "Neural2 J (male)" },
 ];
+
+export type GoogleTtsModel = "cloud-tts" | "gemini-2.5-flash";
+export const DEFAULT_GOOGLE_MODEL: GoogleTtsModel = "cloud-tts";
+
+export const GEMINI_VOICES: { name: string; label: string }[] = [
+	{ name: "Charon", label: "Charon (authoritative male)" },
+	{ name: "Aoede", label: "Aoede (expressive female)" },
+	{ name: "Fenrir", label: "Fenrir (deep male)" },
+	{ name: "Kore", label: "Kore (warm female)" },
+	{ name: "Puck", label: "Puck (youthful male)" },
+	{ name: "Zephyr", label: "Zephyr (breathy female)" },
+	{ name: "Leda", label: "Leda (soft female)" },
+	{ name: "Orus", label: "Orus (strong male)" },
+];
+export const DEFAULT_GEMINI_VOICE_NAME = "Charon";
 
 export interface Chapter {
 	index: number;

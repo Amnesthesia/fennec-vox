@@ -123,3 +123,33 @@ export async function buildM4b(
 
 	return fs.readFile(outputFile);
 }
+
+// Simple ffmpeg concat + format-convert for non-m4b formats when chapters
+// are in a different format (e.g. WAV from Gemini TTS).
+export async function buildAudioFromChapters(
+	chapterFiles: string[],
+	outputFile: string,
+	ffmpegBin: string,
+): Promise<Buffer> {
+	const tmpDir = path.dirname(outputFile);
+	const concatFile = path.join(tmpDir, "_concat_wav.txt");
+	await fs.writeFile(
+		concatFile,
+		chapterFiles
+			.map((f) => `file '${f.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
+			.join("\n"),
+		"utf8",
+	);
+	await execFileAsync(ffmpegBin, [
+		"-f",
+		"concat",
+		"-safe",
+		"0",
+		"-i",
+		concatFile,
+		"-y",
+		outputFile,
+	]);
+	await fs.remove(concatFile);
+	return fs.readFile(outputFile);
+}

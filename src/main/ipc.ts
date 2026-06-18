@@ -11,7 +11,11 @@ import { Buffer } from "buffer";
 import { type BrowserWindow, dialog, ipcMain, shell } from "electron";
 import fs from "fs-extra";
 import OpenAI from "openai";
-import { buildM4b, resolveFfmpegBin } from "../lib/audio";
+import {
+	buildAudioFromChapters,
+	buildM4b,
+	resolveFfmpegBin,
+} from "../lib/audio";
 import type { ConversionIO } from "../lib/conversion";
 import { runConversion } from "../lib/conversion";
 import { elevenLabsOutputFormat } from "../lib/elevenlabs";
@@ -22,7 +26,13 @@ import {
 } from "../lib/markup";
 import { extractContent } from "../lib/pdf/node";
 import { findExcerpt, padded, safeFilename } from "../lib/text";
-import type { Chapter, ChapterRecord, Progress, TtsFormat } from "../lib/types";
+import type {
+	Chapter,
+	ChapterRecord,
+	GoogleTtsModel,
+	Progress,
+	TtsFormat,
+} from "../lib/types";
 import { innerTtsFormat } from "../lib/types";
 import { getCredentials, saveCredentials } from "./keychain";
 
@@ -56,7 +66,12 @@ function createNodeIO(
 	bookAuthor: string,
 	outputFile: string,
 	send: (channel: string, payload?: unknown) => void,
+	googleModel?: GoogleTtsModel,
 ): ConversionIO {
+	const innerFmt = innerTtsFormat(format, "google", googleModel);
+	const needsFfmpegAssembly =
+		format === "m4b" || format === "m4a" || innerFmt === "wav";
+
 	return {
 		async getMarkupCache(key) {
 			try {
@@ -107,22 +122,26 @@ function createNodeIO(
 		isCancelled() {
 			return token.cancelled;
 		},
-		...(format === "m4b" || format === "m4a"
+		...(needsFfmpegAssembly
 			? {
 					async onAssemble(chapterKeys: string[], chapterTitles: string[]) {
 						const ffmpegBin = resolveFfmpegBin();
 						send(IPC.CONVERSION_LOG, `Using ffmpeg: ${ffmpegBin}`);
-						const chaps = chapterKeys.map((file, i) => ({
-							file,
-							title: chapterTitles[i] ?? "",
-						}));
-						return buildM4b(
-							chaps,
-							outputFile,
-							bookTitle,
-							bookAuthor,
-							ffmpegBin,
-						);
+						if (format === "m4b" || format === "m4a") {
+							const chaps = chapterKeys.map((file, i) => ({
+								file,
+								title: chapterTitles[i] ?? "",
+							}));
+							return buildM4b(
+								chaps,
+								outputFile,
+								bookTitle,
+								bookAuthor,
+								ffmpegBin,
+							);
+						}
+						// Non-m4b with WAV chapters (Gemini): use ffmpeg concat+convert
+						return buildAudioFromChapters(chapterKeys, outputFile, ffmpegBin);
 					},
 				}
 			: {}),
@@ -199,6 +218,55 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 				}
 				const buf = await res.arrayBuffer();
 				return { audio: Buffer.from(buf).toString("base64") };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
+		if (
+			opts.ttsProvider === "google" &&
+			opts.googleModel === "gemini-2.5-flash"
+		) {
+			const { googleKey } = await getCredentials();
+			if (!googleKey) return { error: "No Google API key configured." };
+			if (!opts.googleVoiceName) return { error: "No Gemini voice selected." };
+			try {
+				const res = await fetch(
+					`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${googleKey}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							contents: [{ parts: [{ text: opts.text }], role: "user" }],
+							generationConfig: {
+								responseModalities: ["AUDIO"],
+								speechConfig: {
+									voiceConfig: {
+										prebuiltVoiceConfig: {
+											voiceName: opts.googleVoiceName,
+										},
+									},
+								},
+							},
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `Gemini TTS preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const json = (await res.json()) as {
+					candidates: Array<{
+						content: {
+							parts: Array<{ inlineData: { data: string } }>;
+						};
+					}>;
+				};
+				const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
+				if (!data) return { error: "No audio in Gemini TTS response" };
+				return { audio: data };
 			} catch (e: unknown) {
 				return { error: String(e) };
 			}
@@ -311,18 +379,26 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
 			const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
 				await getCredentials();
-			if (!openaiKey)
+			const ttsProvider = opts.ttsProvider;
+			const googleModel = opts.googleModel;
+			const isGeminiMode =
+				ttsProvider === "google" && googleModel === "gemini-2.5-flash";
+
+			if (!openaiKey && !isGeminiMode)
 				return {
 					error: "OpenAI API key is required. Configure it in Settings.",
 				};
 
-			let provider: ReturnType<typeof detectMarkupProvider>;
-			try {
-				provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
-			} catch (e) {
-				return { error: (e as Error).message };
+			let provider: import("../lib/types").MarkupProvider;
+			if (isGeminiMode) {
+				provider = "gemini-flash";
+			} else {
+				try {
+					provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+				} catch (e) {
+					return { error: (e as Error).message };
+				}
 			}
-			const ttsProvider = opts.ttsProvider;
 
 			const send = (channel: string, payload?: unknown) => {
 				if (!win.isDestroyed()) win.webContents.send(channel, payload);
@@ -376,7 +452,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					await saveProgress(workDir, progress);
 
 					// Re-process chapters with a mismatched cached format
-					const expectedExt = `.${innerTtsFormat(format, ttsProvider)}`;
+					const expectedExt = `.${innerTtsFormat(format, ttsProvider, googleModel)}`;
 					for (const ch of chapters) {
 						const rec = progress.completedChapters[ch.index];
 						if (rec && !rec.file.endsWith(expectedExt)) {
@@ -418,7 +494,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 					const anthropic = anthropicKey
 						? new Anthropic({ apiKey: anthropicKey })
 						: null;
-					const openai = new OpenAI({ apiKey: openaiKey });
+					const openai = new OpenAI({
+						apiKey: openaiKey || "unused",
+					});
 					const io = createNodeIO(
 						chaptersDir,
 						narratorDir,
@@ -428,6 +506,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						metadata.author,
 						outputFile,
 						send,
+						googleModel,
 					);
 
 					const { assembled, chapterCount, total } = await runConversion({
@@ -445,6 +524,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						elevenLabsModel: opts.elevenLabsModel,
 						googleApiKey: googleKey || undefined,
 						googleVoiceName: opts.googleVoiceName,
+						googleModel,
 						chunkSize: opts.chunkSize,
 						concurrency: opts.concurrency,
 						ttsInstructions: opts.ttsInstructions,
@@ -461,7 +541,14 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 						return;
 					}
 
-					if (format !== "m4b" && format !== "m4a") {
+					// For m4b/m4a and Gemini WAV: onAssemble already wrote the file.
+					// For other formats write it now.
+					const innerFmtCheck = innerTtsFormat(
+						format,
+						ttsProvider,
+						googleModel,
+					);
+					if (format !== "m4b" && format !== "m4a" && innerFmtCheck !== "wav") {
 						await fs.writeFile(outputFile, assembled);
 					}
 

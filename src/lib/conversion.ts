@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Buffer } from "buffer";
 import type OpenAI from "openai";
 import { synthesiseTextElevenLabs } from "./elevenlabs";
+import { concatWavBuffers, synthesiseTextGemini } from "./gemini";
 import { synthesiseTextGoogle } from "./google";
 import { addNarratorMarkup, narratorStyleFor } from "./markup";
 import { pLimit } from "./pLimit";
@@ -12,6 +13,7 @@ import type {
 	Chapter,
 	ChapterRecord,
 	ElevenLabsModel,
+	GoogleTtsModel,
 	MarkupProvider,
 	ProgressEvent,
 	TtsFormat,
@@ -21,6 +23,7 @@ import type {
 } from "./types";
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GEMINI_VOICE_NAME,
 	DEFAULT_GOOGLE_VOICE_NAME,
 	innerTtsFormat,
 } from "./types";
@@ -32,11 +35,11 @@ export interface ConversionIO {
 	getMarkupCache(key: string): Promise<string | null>;
 	setMarkupCache(key: string, value: string): Promise<void>;
 	audioChunkCache: ChunkCache | null;
-	chunkKey(chapterIndex: number, chunkIndex: number, format: TtsFormat): string;
+	chunkKey(chapterIndex: number, chunkIndex: number, format: string): string;
 	saveChapterAudio(
 		chapterIndex: number,
 		data: Buffer,
-		format: TtsFormat,
+		format: string,
 	): Promise<string>;
 	readChapterAudio(key: string): Promise<Buffer>;
 	onProgress(event: ProgressEvent): void;
@@ -67,6 +70,7 @@ interface ProcessorOpts {
 	// Google TTS options (used when ttsProvider is "google").
 	googleApiKey?: string;
 	googleVoiceName?: string;
+	googleModel?: GoogleTtsModel;
 	format: TtsFormat;
 	chunkSize: number;
 	concurrency: number;
@@ -92,6 +96,7 @@ export async function processChapter(
 		elevenLabsModel,
 		googleApiKey,
 		googleVoiceName,
+		googleModel,
 		chunkSize,
 		concurrency,
 		total,
@@ -104,7 +109,11 @@ export async function processChapter(
 		`\n── Chapter ${index}/${total - 1}: "${title}" (${text.length.toLocaleString()} chars) ──`,
 	);
 
-	const narratorStyle = narratorStyleFor(ttsProvider, elevenLabsModel);
+	const narratorStyle = narratorStyleFor(
+		ttsProvider,
+		elevenLabsModel,
+		googleModel,
+	);
 	const markupKey = `chapter-${padded(index)}.${narratorStyle}.txt`;
 	let ttsText: string;
 
@@ -124,11 +133,12 @@ export async function processChapter(
 			chunkSize,
 			concurrency,
 			narratorStyle,
+			googleApiKey,
 		);
 		await io.setMarkupCache(markupKey, ttsText);
 	}
 
-	const innerFmt = innerTtsFormat(format, ttsProvider);
+	const innerFmt = innerTtsFormat(format, ttsProvider, googleModel);
 	const ttsChunks = splitIntoChunks(ttsText, TTS_MAX_CHARS).length;
 	io.onProgress({ type: "chapter_tts", index, chunks: ttsChunks });
 	io.onLog(
@@ -153,29 +163,39 @@ export async function processChapter(
 					io.audioChunkCache,
 					onTtsChunk,
 				)
-			: ttsProvider === "google"
-				? await synthesiseTextGoogle(
+			: ttsProvider === "google" && googleModel === "gemini-2.5-flash"
+				? await synthesiseTextGemini(
 						googleApiKey ?? "",
 						ttsText,
-						googleVoiceName || DEFAULT_GOOGLE_VOICE_NAME,
-						format,
+						googleVoiceName || DEFAULT_GEMINI_VOICE_NAME,
 						concurrency,
 						(i) => io.chunkKey(index, i, innerFmt),
 						io.audioChunkCache,
 						onTtsChunk,
 					)
-				: await synthesiseText(
-						openai,
-						ttsText,
-						voice,
-						innerFmt,
-						ttsModel,
-						concurrency,
-						(i) => io.chunkKey(index, i, innerFmt),
-						io.audioChunkCache,
-						onTtsChunk,
-						ttsInstructions,
-					);
+				: ttsProvider === "google"
+					? await synthesiseTextGoogle(
+							googleApiKey ?? "",
+							ttsText,
+							googleVoiceName || DEFAULT_GOOGLE_VOICE_NAME,
+							format,
+							concurrency,
+							(i) => io.chunkKey(index, i, innerFmt),
+							io.audioChunkCache,
+							onTtsChunk,
+						)
+					: await synthesiseText(
+							openai,
+							ttsText,
+							voice,
+							innerFmt as "mp3" | "opus" | "aac" | "flac",
+							ttsModel,
+							concurrency,
+							(i) => io.chunkKey(index, i, innerFmt),
+							io.audioChunkCache,
+							onTtsChunk,
+							ttsInstructions,
+						);
 
 	const file = await io.saveChapterAudio(index, audioBuffer, innerFmt);
 	io.onLog(
@@ -208,6 +228,7 @@ export interface RunConversionOpts {
 	elevenLabsModel?: ElevenLabsModel;
 	googleApiKey?: string;
 	googleVoiceName?: string;
+	googleModel?: GoogleTtsModel;
 	chunkSize: number;
 	concurrency: number;
 	io: ConversionIO;
@@ -228,14 +249,8 @@ export interface RunConversionResult {
 export async function runConversion(
 	opts: RunConversionOpts,
 ): Promise<RunConversionResult> {
-	const {
-		chapters,
-		completedChapters,
-		io,
-		concurrency,
-		onChapterComplete,
-		format,
-	} = opts;
+	const { chapters, completedChapters, io, concurrency, onChapterComplete } =
+		opts;
 
 	const processorOpts: ProcessorOpts = {
 		provider: opts.provider,
@@ -250,6 +265,7 @@ export async function runConversion(
 		elevenLabsModel: opts.elevenLabsModel,
 		googleApiKey: opts.googleApiKey,
 		googleVoiceName: opts.googleVoiceName,
+		googleModel: opts.googleModel,
 		chunkSize: opts.chunkSize,
 		concurrency: opts.concurrency,
 		total: chapters.length,
@@ -282,8 +298,11 @@ export async function runConversion(
 		.map(Number)
 		.sort((a, b) => a - b);
 
+	const ttsProvider = opts.ttsProvider ?? "openai";
+	const innerFmt = innerTtsFormat(opts.format, ttsProvider, opts.googleModel);
+
 	let assembled: Buffer;
-	if ((format === "m4b" || format === "m4a") && io.onAssemble) {
+	if (io.onAssemble) {
 		const chapterKeys = sortedKeys.map((k) => completedChapters[k]?.file);
 		const chapterTitles = sortedKeys.map((k) => completedChapters[k]?.title);
 		assembled = await io.onAssemble(
@@ -292,6 +311,11 @@ export async function runConversion(
 			opts.bookTitle ?? "",
 			opts.bookAuthor ?? "",
 		);
+	} else if (innerFmt === "wav") {
+		const parts = await Promise.all(
+			sortedKeys.map((k) => io.readChapterAudio(completedChapters[k]?.file)),
+		);
+		assembled = concatWavBuffers(parts);
 	} else {
 		const parts = await Promise.all(
 			sortedKeys.map((k) => io.readChapterAudio(completedChapters[k]?.file)),

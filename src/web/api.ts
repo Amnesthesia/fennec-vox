@@ -178,6 +178,55 @@ export const browserApi = {
 			}
 		}
 
+		if (
+			opts.ttsProvider === "google" &&
+			opts.googleModel === "gemini-2.5-flash"
+		) {
+			const { googleKey } = await getCredentials();
+			if (!googleKey) return { error: "No Google API key configured." };
+			if (!opts.googleVoiceName) return { error: "No Gemini voice selected." };
+			try {
+				const res = await fetch(
+					`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${googleKey}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							contents: [{ parts: [{ text: opts.text }], role: "user" }],
+							generationConfig: {
+								responseModalities: ["AUDIO"],
+								speechConfig: {
+									voiceConfig: {
+										prebuiltVoiceConfig: {
+											voiceName: opts.googleVoiceName,
+										},
+									},
+								},
+							},
+						}),
+					},
+				);
+				if (!res.ok) {
+					const errBody = await res.text().catch(() => "");
+					return {
+						error: `Gemini TTS preview failed (${res.status}): ${errBody || res.statusText}`,
+					};
+				}
+				const json = (await res.json()) as {
+					candidates: Array<{
+						content: {
+							parts: Array<{ inlineData: { data: string } }>;
+						};
+					}>;
+				};
+				const data = json.candidates[0]?.content?.parts[0]?.inlineData?.data;
+				if (!data) return { error: "No audio in Gemini TTS response" };
+				return { audio: data };
+			} catch (e: unknown) {
+				return { error: String(e) };
+			}
+		}
+
 		if (opts.ttsProvider === "google") {
 			const { googleKey } = await getCredentials();
 			if (!googleKey) return { error: "No Google API key configured." };
@@ -300,16 +349,24 @@ export const browserApi = {
 
 		const { anthropicKey, openaiKey, elevenLabsKey, googleKey } =
 			await getCredentials();
-		if (!openaiKey)
+		const ttsProvider = opts.ttsProvider;
+		const googleModel = opts.googleModel;
+		const isGeminiMode =
+			ttsProvider === "google" && googleModel === "gemini-2.5-flash";
+
+		if (!openaiKey && !isGeminiMode)
 			return { error: "OpenAI API key is required. Configure it in Settings." };
 
-		let provider: ReturnType<typeof detectMarkupProvider>;
-		try {
-			provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
-		} catch (e) {
-			return { error: (e as Error).message };
+		let provider: import("../lib/types").MarkupProvider;
+		if (isGeminiMode) {
+			provider = "gemini-flash";
+		} else {
+			try {
+				provider = detectMarkupProvider(anthropicKey || undefined, openaiKey);
+			} catch (e) {
+				return { error: (e as Error).message };
+			}
 		}
-		const ttsProvider = opts.ttsProvider;
 
 		// Run async — return immediately so the UI can subscribe to events first
 		void (async () => {
@@ -368,7 +425,7 @@ export const browserApi = {
 						})
 					: null;
 				const openai = new OpenAI({
-					apiKey: openaiKey,
+					apiKey: openaiKey || "unused",
 					dangerouslyAllowBrowser: true,
 				});
 				const io: ConversionIO = createBrowserIO();
@@ -388,6 +445,7 @@ export const browserApi = {
 					elevenLabsModel: opts.elevenLabsModel,
 					googleApiKey: googleKey || undefined,
 					googleVoiceName: opts.googleVoiceName,
+					googleModel,
 					chunkSize: opts.chunkSize,
 					concurrency: opts.concurrency,
 					ttsInstructions: opts.ttsInstructions,
@@ -402,12 +460,17 @@ export const browserApi = {
 
 				// Download the result (named after the format actually synthesised,
 				// since ElevenLabs returns mp3/opus regardless of the requested format)
-				const ext = innerTtsFormat(opts.format as TtsFormat, ttsProvider);
+				const ext = innerTtsFormat(
+					opts.format as TtsFormat,
+					ttsProvider,
+					googleModel,
+				);
 				const mimeTypes: Record<string, string> = {
 					mp3: "audio/mpeg",
 					opus: "audio/ogg",
 					aac: "audio/aac",
 					flac: "audio/flac",
+					wav: "audio/wav",
 				};
 				const mime = mimeTypes[ext] ?? "audio/mpeg";
 				const blob = new Blob([new Uint8Array(assembled)], { type: mime });

@@ -1,6 +1,7 @@
 import type {
 	ConversionOptions,
 	ElevenLabsModel,
+	GoogleTtsModel,
 	ProgressEvent,
 	TtsFormat,
 	TtsModel,
@@ -10,6 +11,8 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_ELEVENLABS_VOICE_ID,
+	DEFAULT_GEMINI_VOICE_NAME,
+	DEFAULT_GOOGLE_MODEL,
 	DEFAULT_GOOGLE_VOICE_NAME,
 } from "../../lib/types";
 import ConversionConfig from "./components/ConversionConfig";
@@ -76,6 +79,11 @@ export default function App() {
 	const [googleKey, setGoogleKey] = useState("");
 	const [googleVoiceName, setGoogleVoiceName] = useState(
 		DEFAULT_GOOGLE_VOICE_NAME,
+	);
+	const [googleModel, setGoogleModel] =
+		useState<GoogleTtsModel>(DEFAULT_GOOGLE_MODEL);
+	const [geminiVoiceName, setGeminiVoiceName] = useState(
+		DEFAULT_GEMINI_VOICE_NAME,
 	);
 	const [ttsProvider, setTtsProvider] = useState<TtsProvider>("openai");
 
@@ -281,7 +289,13 @@ export default function App() {
 				ttsProvider === "elevenlabs" ? elevenLabsVoiceId : undefined,
 			elevenLabsModel:
 				ttsProvider === "elevenlabs" ? elevenLabsModel : undefined,
-			googleVoiceName: ttsProvider === "google" ? googleVoiceName : undefined,
+			googleVoiceName:
+				ttsProvider === "google"
+					? googleModel === "gemini-2.5-flash"
+						? geminiVoiceName
+						: googleVoiceName
+					: undefined,
+			googleModel: ttsProvider === "google" ? googleModel : undefined,
 		};
 		const result = await window.api.startConversion(opts);
 		console.debug("Conversion start result:", result);
@@ -307,8 +321,8 @@ export default function App() {
 		return <div className="app" />;
 	}
 
-	// Setup gate — no key yet
-	if (hasOpenAiKey === false) {
+	// Setup gate — no key yet (bypass if Google key is present for Gemini mode)
+	if (hasOpenAiKey === false && !googleKey) {
 		return (
 			<div className="app">
 				<div className="titlebar" />
@@ -426,6 +440,10 @@ export default function App() {
 						hasGoogleKey={!!googleKey}
 						googleVoiceName={googleVoiceName}
 						onGoogleVoiceNameChange={setGoogleVoiceName}
+						googleModel={googleModel}
+						onGoogleModelChange={setGoogleModel}
+						geminiVoiceName={geminiVoiceName}
+						onGeminiVoiceNameChange={setGeminiVoiceName}
 					/>
 
 					<div

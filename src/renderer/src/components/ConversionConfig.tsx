@@ -1,12 +1,17 @@
 import type {
 	ElevenLabsModel,
+	GoogleTtsModel,
 	TtsFormat,
 	TtsModel,
 	TtsProvider,
 	TtsVoice,
 } from "@shared/ipc";
 import { useEffect, useRef, useState } from "react";
-import { ELEVENLABS_VOICES, GOOGLE_VOICES } from "../../../lib/types";
+import {
+	ELEVENLABS_VOICES,
+	GEMINI_VOICES,
+	GOOGLE_VOICES,
+} from "../../../lib/types";
 
 const ALL_VOICES: TtsVoice[] = [
 	"alloy",
@@ -54,6 +59,10 @@ interface Props {
 	hasGoogleKey: boolean;
 	googleVoiceName: string;
 	onGoogleVoiceNameChange: (v: string) => void;
+	googleModel: GoogleTtsModel;
+	onGoogleModelChange: (v: GoogleTtsModel) => void;
+	geminiVoiceName: string;
+	onGeminiVoiceNameChange: (v: string) => void;
 }
 
 function slugToTitle(slug: string): string {
@@ -83,6 +92,10 @@ export default function ConversionConfig({
 	hasGoogleKey,
 	googleVoiceName,
 	onGoogleVoiceNameChange,
+	googleModel,
+	onGoogleModelChange,
+	geminiVoiceName,
+	onGeminiVoiceNameChange,
 }: Props) {
 	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [previewing, setPreviewing] = useState(false);
@@ -94,6 +107,7 @@ export default function ConversionConfig({
 	const popoverRef = useRef<HTMLDivElement | null>(null);
 	const elPreviewCache = useRef<Map<string, string>>(new Map());
 	const googlePreviewCache = useRef<Map<string, string>>(new Map());
+	const geminiPreviewCache = useRef<Map<string, string>>(new Map());
 
 	// Update poem list when OpenAI voice changes
 	useEffect(() => {
@@ -276,6 +290,55 @@ export default function ConversionConfig({
 		if (pick) void playGooglePoem(vName, pick);
 	};
 
+	const playGeminiPoem = async (vName: string, slug: string) => {
+		if (!vName) return;
+		const text = poemTexts[slug];
+		if (!text) return;
+		if (audioRef.current) {
+			audioRef.current.pause();
+			audioRef.current = null;
+		}
+		const playBase64 = (audio64: string) => {
+			setPreviewing(true);
+			const audio = new Audio(`data:audio/wav;base64,${audio64}`);
+			audioRef.current = audio;
+			audio.play().catch(() => {});
+			audio.onended = () => setPreviewing(false);
+			audio.onerror = () => setPreviewing(false);
+		};
+
+		const cacheKey = `${vName}|${slug}`;
+		const cached = geminiPreviewCache.current.get(cacheKey);
+		if (cached) {
+			playBase64(cached);
+			return;
+		}
+
+		setSynthesizing(true);
+		try {
+			const result = await window.api.previewVoice({
+				ttsProvider: "google",
+				googleModel: "gemini-2.5-flash",
+				text,
+				googleVoiceName: vName,
+			});
+			setSynthesizing(false);
+			if (result.error || !result.audio) return;
+			geminiPreviewCache.current.set(cacheKey, result.audio);
+			playBase64(result.audio);
+		} catch {
+			setSynthesizing(false);
+		}
+	};
+
+	const handleGeminiVoiceChange = async (vName: string) => {
+		onGeminiVoiceNameChange(vName);
+		const slugs = Object.keys(poemTexts);
+		if (slugs.length === 0) return;
+		const pick = slugs[Math.floor(Math.random() * slugs.length)];
+		if (pick) void playGeminiPoem(vName, pick);
+	};
+
 	const showProviderToggle = hasElevenLabsKey || hasGoogleKey;
 
 	return (
@@ -398,87 +461,175 @@ export default function ConversionConfig({
 					</div>
 				</div>
 			) : ttsProvider === "google" ? (
-				<div className="section">
-					<div className="section-label">
-						Voice
-						{synthesizing && (
-							<span className="preview-badge">⏳ synthesizing…</span>
-						)}
-						{!synthesizing && previewing && (
-							<span className="preview-badge">▶ playing</span>
-						)}
-					</div>
-					<div className="field">
-						<div
-							style={{
-								display: "flex",
-								gap: 6,
-								alignItems: "center",
-								position: "relative",
-							}}
-						>
-							<select
-								style={{ flex: 1 }}
-								value={
-									GOOGLE_VOICES.some((v) => v.name === googleVoiceName)
-										? googleVoiceName
-										: "__custom__"
-								}
-								onChange={(e) => {
-									const val = e.target.value;
-									if (val === "__custom__") {
-										onGoogleVoiceNameChange("");
-										return;
-									}
-									void handleGoogleVoiceChange(val);
-								}}
-							>
-								{GOOGLE_VOICES.map((v) => (
-									<option key={v.name} value={v.name}>
-										{v.label}
-									</option>
-								))}
-								<option value="__custom__">Custom voice name…</option>
-							</select>
-
-							<button
-								className="btn-icon"
-								title="Preview a specific poem"
-								style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
-								onClick={() => setShowPoems((v) => !v)}
-							>
-								▶
-							</button>
-
-							{showPoems && (
-								<div className="poem-popover" ref={popoverRef}>
-									{Object.keys(poemTexts).map((slug) => (
-										<button
-											key={slug}
-											className="poem-popover-item"
-											onClick={() => {
-												void playGooglePoem(googleVoiceName, slug);
-												setShowPoems(false);
-											}}
-										>
-											{slugToTitle(slug)}
-										</button>
-									))}
-								</div>
-							)}
+				<>
+					<div className="section">
+						<div className="section-label">Google TTS Model</div>
+						<div className="field">
+							<div className="provider-toggle">
+								<button
+									className={`provider-toggle-btn${googleModel === "cloud-tts" ? " active" : ""}`}
+									onClick={() => onGoogleModelChange("cloud-tts")}
+									type="button"
+								>
+									Cloud TTS
+								</button>
+								<button
+									className={`provider-toggle-btn${googleModel === "gemini-2.5-flash" ? " active" : ""}`}
+									onClick={() => onGoogleModelChange("gemini-2.5-flash")}
+									type="button"
+								>
+									Gemini 2.5 Flash
+								</button>
+							</div>
 						</div>
-						{!GOOGLE_VOICES.some((v) => v.name === googleVoiceName) && (
-							<input
-								style={{ marginTop: 6 }}
-								value={googleVoiceName}
-								onChange={(e) => onGoogleVoiceNameChange(e.target.value)}
-								placeholder="e.g. en-US-Journey-F"
-								spellCheck={false}
-								autoComplete="off"
-							/>
-						)}
 					</div>
-				</div>
+
+					{googleModel === "gemini-2.5-flash" ? (
+						<div className="section">
+							<div className="section-label">
+								Voice
+								{synthesizing && (
+									<span className="preview-badge">⏳ synthesizing…</span>
+								)}
+								{!synthesizing && previewing && (
+									<span className="preview-badge">▶ playing</span>
+								)}
+							</div>
+							<div className="field">
+								<div
+									style={{
+										display: "flex",
+										gap: 6,
+										alignItems: "center",
+										position: "relative",
+									}}
+								>
+									<select
+										style={{ flex: 1 }}
+										value={geminiVoiceName}
+										onChange={(e) => {
+											void handleGeminiVoiceChange(e.target.value);
+										}}
+									>
+										{GEMINI_VOICES.map((v) => (
+											<option key={v.name} value={v.name}>
+												{v.label}
+											</option>
+										))}
+									</select>
+
+									<button
+										className="btn-icon"
+										title="Preview a specific poem"
+										style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
+										onClick={() => setShowPoems((v) => !v)}
+									>
+										▶
+									</button>
+
+									{showPoems && (
+										<div className="poem-popover" ref={popoverRef}>
+											{Object.keys(poemTexts).map((slug) => (
+												<button
+													key={slug}
+													className="poem-popover-item"
+													onClick={() => {
+														void playGeminiPoem(geminiVoiceName, slug);
+														setShowPoems(false);
+													}}
+												>
+													{slugToTitle(slug)}
+												</button>
+											))}
+										</div>
+									)}
+								</div>
+							</div>
+						</div>
+					) : (
+						<div className="section">
+							<div className="section-label">
+								Voice
+								{synthesizing && (
+									<span className="preview-badge">⏳ synthesizing…</span>
+								)}
+								{!synthesizing && previewing && (
+									<span className="preview-badge">▶ playing</span>
+								)}
+							</div>
+							<div className="field">
+								<div
+									style={{
+										display: "flex",
+										gap: 6,
+										alignItems: "center",
+										position: "relative",
+									}}
+								>
+									<select
+										style={{ flex: 1 }}
+										value={
+											GOOGLE_VOICES.some((v) => v.name === googleVoiceName)
+												? googleVoiceName
+												: "__custom__"
+										}
+										onChange={(e) => {
+											const val = e.target.value;
+											if (val === "__custom__") {
+												onGoogleVoiceNameChange("");
+												return;
+											}
+											void handleGoogleVoiceChange(val);
+										}}
+									>
+										{GOOGLE_VOICES.map((v) => (
+											<option key={v.name} value={v.name}>
+												{v.label}
+											</option>
+										))}
+										<option value="__custom__">Custom voice name…</option>
+									</select>
+
+									<button
+										className="btn-icon"
+										title="Preview a specific poem"
+										style={{ fontSize: 14, padding: "4px 6px", flexShrink: 0 }}
+										onClick={() => setShowPoems((v) => !v)}
+									>
+										▶
+									</button>
+
+									{showPoems && (
+										<div className="poem-popover" ref={popoverRef}>
+											{Object.keys(poemTexts).map((slug) => (
+												<button
+													key={slug}
+													className="poem-popover-item"
+													onClick={() => {
+														void playGooglePoem(googleVoiceName, slug);
+														setShowPoems(false);
+													}}
+												>
+													{slugToTitle(slug)}
+												</button>
+											))}
+										</div>
+									)}
+								</div>
+								{!GOOGLE_VOICES.some((v) => v.name === googleVoiceName) && (
+									<input
+										style={{ marginTop: 6 }}
+										value={googleVoiceName}
+										onChange={(e) => onGoogleVoiceNameChange(e.target.value)}
+										placeholder="e.g. en-US-Journey-F"
+										spellCheck={false}
+										autoComplete="off"
+									/>
+								)}
+							</div>
+						</div>
+					)}
+				</>
 			) : (
 				<div className="section">
 					<div className="section-label">

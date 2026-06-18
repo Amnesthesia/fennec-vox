@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
+import { addNarratorMarkupGemini } from "./gemini";
 import { pLimit } from "./pLimit";
 import { sleep, splitIntoChunks } from "./text";
 import type {
@@ -8,6 +9,7 @@ import type {
 	ChapterRecord,
 	CostEstimate,
 	ElevenLabsModel,
+	GoogleTtsModel,
 	MarkupProvider,
 	TtsModel,
 	TtsProvider,
@@ -23,8 +25,11 @@ export type NarratorStyle = "plain" | "audio-tags" | "ssml-breaks";
 export function narratorStyleFor(
 	ttsProvider: TtsProvider,
 	elevenLabsModel?: ElevenLabsModel,
+	googleModel?: GoogleTtsModel,
 ): NarratorStyle {
-	if (ttsProvider === "google") return "ssml-breaks";
+	if (ttsProvider === "google") {
+		return googleModel === "gemini-2.5-flash" ? "plain" : "ssml-breaks";
+	}
 	if (ttsProvider !== "elevenlabs") return "plain";
 	return elevenLabsModel === "eleven_v3" ? "audio-tags" : "ssml-breaks";
 }
@@ -138,8 +143,20 @@ export async function addNarratorMarkup(
 	chunkSize: number,
 	concurrency: number,
 	style: NarratorStyle = "plain",
+	geminiApiKey?: string,
 ): Promise<string> {
 	const systemPrompt = systemPromptFor(style);
+	if (provider === "gemini-flash") {
+		if (!geminiApiKey)
+			throw new Error("Google API key required for Gemini markup");
+		return addNarratorMarkupGemini(
+			geminiApiKey,
+			text,
+			chunkSize,
+			concurrency,
+			systemPrompt,
+		);
+	}
 	if (provider === "claude-haiku") {
 		if (!anthropic)
 			throw new Error("Anthropic client required for claude-haiku provider");
@@ -305,11 +322,15 @@ export function estimateCosts(
 	const markupInputRate =
 		provider === "claude-haiku"
 			? PRICING.claudeHaikuInputPerMTok
-			: PRICING.gpt4oMiniInputPerMTok;
+			: provider === "gemini-flash"
+				? PRICING.gpt4oMiniInputPerMTok
+				: PRICING.gpt4oMiniInputPerMTok;
 	const markupOutputRate =
 		provider === "claude-haiku"
 			? PRICING.claudeHaikuOutputPerMTok
-			: PRICING.gpt4oMiniOutputPerMTok;
+			: provider === "gemini-flash"
+				? PRICING.gpt4oMiniOutputPerMTok
+				: PRICING.gpt4oMiniOutputPerMTok;
 	const claudeCost =
 		(inputTokens / 1_000_000) * markupInputRate +
 		(outputTokens / 1_000_000) * markupOutputRate;
